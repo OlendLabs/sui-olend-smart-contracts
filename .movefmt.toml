@@ -1,0 +1,36 @@
+# Move 代码格式化配置
+# 遵循 Move Book 代码质量检查清单
+
+[format]
+# 缩进设置
+indent_size = 4
+use_tabs = false
+
+# 行长度限制
+max_width = 100
+
+# 函数参数格式化
+fn_args_layout = "Tall"
+
+# 结构体字段格式化
+struct_field_layout = "AlignedBlock"
+
+# 导入语句格式化
+imports_layout = "Mixed"
+imports_granularity = "Crate"
+
+# 注释格式化
+format_code_in_doc_comments = true
+normalize_doc_attributes = true
+
+# 空行处理
+blank_lines_upper_bound = 2
+blank_lines_lower_bound = 0
+
+# 尾随逗号
+trailing_comma = "Vertical"
+
+# 括号和大括号
+spaces_around_ranges = false
+space_before_colon = false
+space_after_colon = true

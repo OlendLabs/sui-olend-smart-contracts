@@ -1,0 +1,134 @@
+/// Error code definition module
+/// Defines error code constants used by all modules in the Olend platform
+module olend::errors;
+
+// ===== Liquidity Module Error Codes (1000-1999) =====
+
+/// Vault is paused
+const EVaultPaused: u64 = 1001;
+
+/// Vault not found
+const EVaultNotFound: u64 = 1002;
+
+/// Insufficient assets
+const EInsufficientAssets: u64 = 1003;
+
+/// Daily limit exceeded
+const EDailyLimitExceeded: u64 = 1004;
+
+/// Invalid shares amount
+const EInvalidShares: u64 = 1005;
+
+/// Version mismatch
+const EVersionMismatch: u64 = 1006;
+
+/// Unauthorized access
+const EUnauthorizedAccess: u64 = 1007;
+
+/// Vault not active
+const EVaultNotActive: u64 = 1008;
+
+/// Invalid assets amount
+const EInvalidAssets: u64 = 1009;
+
+/// Invalid vault configuration
+const EInvalidVaultConfig: u64 = 1010;
+
+/// Zero shares operation
+const EZeroShares: u64 = 1011;
+
+/// Zero assets operation
+const EZeroAssets: u64 = 1012;
+
+/// Vault already exists for this asset type
+const EVaultAlreadyExists: u64 = 1013;
+
+// ===== Account Module Error Codes (2000-2999) =====
+
+/// Account not found
+const EAccountNotFound: u64 = 2001;
+
+/// Account suspended
+const EAccountSuspended: u64 = 2002;
+
+/// Insufficient allowance
+const EInsufficientAllowance: u64 = 2003;
+
+/// Unauthorized operation
+const EUnauthorizedOperation: u64 = 2004;
+
+/// Invalid sub account
+const EInvalidSubAccount: u64 = 2005;
+
+/// Allowance expired
+const EAllowanceExpired: u64 = 2006;
+
+/// Account capability mismatch
+const EAccountCapMismatch: u64 = 2007;
+
+/// Account already exists
+const EAccountAlreadyExists: u64 = 2008;
+
+/// Invalid account status
+const EInvalidAccountStatus: u64 = 2009;
+
+/// Sub account capability mismatch
+const ESubAccountCapMismatch: u64 = 2010;
+
+/// Position ID not found
+const EPositionIdNotFound: u64 = 2011;
+
+/// Invalid allowance type
+const EInvalidAllowanceType: u64 = 2012;
+
+// ===== General Error Codes (9000-9999) =====
+
+/// Invalid input parameter
+const EInvalidInput: u64 = 9001;
+
+/// Operation denied
+const EOperationDenied: u64 = 9002;
+
+/// System under maintenance
+const ESystemMaintenance: u64 = 9003;
+
+/// Internal error
+const EInternalError: u64 = 9004;
+
+// ===== Public Access Functions =====
+// Since constants are module-internal, provide public functions to access error codes
+
+/// Get Vault-related error codes
+public fun vault_paused(): u64 { EVaultPaused }
+public fun vault_not_found(): u64 { EVaultNotFound }
+public fun insufficient_assets(): u64 { EInsufficientAssets }
+public fun daily_limit_exceeded(): u64 { EDailyLimitExceeded }
+public fun invalid_shares(): u64 { EInvalidShares }
+public fun version_mismatch(): u64 { EVersionMismatch }
+public fun unauthorized_access(): u64 { EUnauthorizedAccess }
+public fun vault_not_active(): u64 { EVaultNotActive }
+public fun invalid_assets(): u64 { EInvalidAssets }
+public fun invalid_vault_config(): u64 { EInvalidVaultConfig }
+public fun zero_shares(): u64 { EZeroShares }
+public fun zero_assets(): u64 { EZeroAssets }
+public fun vault_already_exists(): u64 { EVaultAlreadyExists }
+
+/// Get Account-related error codes
+public fun account_not_found(): u64 { EAccountNotFound }
+public fun account_suspended(): u64 { EAccountSuspended }
+public fun insufficient_allowance(): u64 { EInsufficientAllowance }
+public fun unauthorized_operation(): u64 { EUnauthorizedOperation }
+public fun invalid_sub_account(): u64 { EInvalidSubAccount }
+public fun allowance_expired(): u64 { EAllowanceExpired }
+public fun account_cap_mismatch(): u64 { EAccountCapMismatch }
+public fun account_already_exists(): u64 { EAccountAlreadyExists }
+public fun invalid_account_status(): u64 { EInvalidAccountStatus }
+public fun sub_account_cap_mismatch(): u64 { ESubAccountCapMismatch }
+public fun position_id_not_found(): u64 { EPositionIdNotFound }
+public fun invalid_allowance_type(): u64 { EInvalidAllowanceType }
+
+/// Get general error codes
+public fun invalid_input(): u64 { EInvalidInput }
+public fun operation_denied(): u64 { EOperationDenied }
+public fun system_maintenance(): u64 { ESystemMaintenance }
+public fun internal_error(): u64 { EInternalError }
