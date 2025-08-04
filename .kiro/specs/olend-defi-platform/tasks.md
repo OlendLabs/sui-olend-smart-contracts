@@ -29,7 +29,11 @@
     - 编写 Registry 管理的单元测试
     - _需求: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-  - [ ] 2.2 实现 Vault<T> 核心结构和 ERC-4626 兼容接口
+  - [x] 2.2 实现 Vault<T> 核心结构和 ERC-4626 兼容接口
+
+
+
+
     - 定义 Vault<T>、VaultStatus、DailyLimit 结构体
     - 实现 Vault 创建和初始化函数
     - 实现 ERC-4626 标准的核心函数：deposit、withdraw、totalAssets、totalSupply

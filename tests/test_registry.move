@@ -1,6 +1,7 @@
 /// Registry module unit tests
 /// Tests Registry creation, Vault management, and query functions
 #[test_only]
+#[allow(duplicate_alias)]
 module olend::test_registry;
 
 use sui::test_scenario;
@@ -10,6 +11,7 @@ use std::option;
 
 use olend::liquidity;
 use olend::constants;
+use olend::errors;
 
 // Mock asset types for testing
 public struct TestCoin has drop {}
@@ -288,7 +290,7 @@ fun test_set_default_vault() {
 
 /// Test permission verification - unauthorized admin attempts
 #[test]
-#[expected_failure(abort_code = 1007)]
+#[expected_failure(abort_code = olend::errors::unauthorized_access)]
 fun test_unauthorized_access() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -323,7 +325,7 @@ fun test_unauthorized_access() {
 
 /// Test pausing non-existent Vault
 #[test]
-#[expected_failure(abort_code = 1002)]
+#[expected_failure(abort_code = olend::errors::vault_not_found)]
 fun test_pause_nonexistent_vault() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -348,7 +350,7 @@ fun test_pause_nonexistent_vault() {
 
 /// Test setting inactive Vault as default
 #[test]
-#[expected_failure(abort_code = 1008)]
+#[expected_failure(abort_code = olend::errors::vault_not_active)]
 fun test_set_inactive_vault_as_default() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -376,7 +378,7 @@ fun test_set_inactive_vault_as_default() {
 
 /// Test that registering a second active Vault fails
 #[test]
-#[expected_failure(abort_code = 1013)]
+#[expected_failure(abort_code = olend::errors::vault_already_exists)]
 fun test_cannot_register_second_active_vault() {
     let mut scenario = test_scenario::begin(ADMIN);
     

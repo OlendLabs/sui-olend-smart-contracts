@@ -1,13 +1,15 @@
-/// Liquidity Module - Unified liquidity management system
-/// Implements Registry and Vault management for the Olend DeFi platform
+/// Liquidity Module - Registry management system
+/// Implements Registry for managing multiple Vaults per asset type
+#[allow(duplicate_alias)]
 module olend::liquidity;
 
 use sui::object::{UID, ID};
-use sui::tx_context::TxContext;
+use sui::tx_context::{Self, TxContext};
 use sui::table::{Self, Table};
 use sui::transfer;
 use std::type_name::{Self, TypeName};
 use std::option::{Self, Option};
+use std::vector;
 
 use olend::constants;
 use olend::errors;
@@ -250,29 +252,29 @@ public fun resume_vault<T>(
     admin_cap: &AdminCap,
     set_as_default: bool,
 ) {
-    // 验证管理员权限
+    // Verify admin permission
     assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
     
-    // 验证版本
+    // Verify version
     assert!(registry.version == constants::current_version(), errors::version_mismatch());
     
     let asset_type = type_name::get<T>();
     
-    // 检查资产类型是否存在
+    // Check if asset type exists
     assert!(table::contains(&registry.asset_vaults, asset_type), errors::vault_not_found());
     
     let vault_list = table::borrow_mut(&mut registry.asset_vaults, asset_type);
     
-    // 从暂停列表中查找并移除
+    // Find and remove from paused list
     let (found, index) = vector::index_of(&vault_list.paused_vaults, &vault_id);
     assert!(found, errors::vault_not_found());
     
     vector::remove(&mut vault_list.paused_vaults, index);
     
-    // 添加到活跃列表
+    // Add to active list
     vector::push_back(&mut vault_list.active_vaults, vault_id);
     
-    // 如果需要设置为默认 Vault
+    // Set as default if requested
     if (set_as_default) {
         vault_list.default_vault = option::some(vault_id);
     };
@@ -292,23 +294,23 @@ public fun set_default_vault<T>(
     vault_id: ID,
     admin_cap: &AdminCap,
 ) {
-    // 验证管理员权限
+    // Verify admin permission
     assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
     
-    // 验证版本
+    // Verify version
     assert!(registry.version == constants::current_version(), errors::version_mismatch());
     
     let asset_type = type_name::get<T>();
     
-    // 检查资产类型是否存在
+    // Check if asset type exists
     assert!(table::contains(&registry.asset_vaults, asset_type), errors::vault_not_found());
     
     let vault_list = table::borrow_mut(&mut registry.asset_vaults, asset_type);
     
-    // 验证 Vault 在活跃列表中
+    // Verify Vault is in active list
     assert!(vector::contains(&vault_list.active_vaults, &vault_id), errors::vault_not_active());
     
-    // 设置为默认 Vault
+    // Set as default Vault
     vault_list.default_vault = option::some(vault_id);
 }
 
@@ -395,8 +397,6 @@ public fun get_admin_cap_id(registry: &Registry): ID {
 }
 
 // ===== Test Helper Functions =====
-
-
 
 #[test_only]
 /// Test access function to get VaultList
