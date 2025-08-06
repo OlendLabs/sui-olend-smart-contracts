@@ -8,7 +8,7 @@ Olend is a decentralized lending platform built on Sui Network, developed using 
 - **Hierarchical Account System**: Complete permission management supporting main accounts and sub-accounts
 - **Efficient Liquidation Mechanism**: Tick-based batch liquidation with low liquidation penalties and high loan-to-value ratios
 - **ERC-4626 Compatibility**: Vault design compatible with ERC-4626 standard
-- **Single Active Vault Policy**: Each asset type can only have one active vault to ensure consistency and security
+- **Single Vault Policy**: Each asset type can only have one vault to ensure simplicity and security
 
 ## Project Structure
 
@@ -39,15 +39,15 @@ olend/
 The liquidity management system provides unified asset management through a registry-vault architecture.
 
 #### Key Components:
-- **Registry**: Global asset vault registry supporting single active vault per asset type
+- **Registry**: Global asset vault registry supporting single vault per asset type
 - **Vault<T>**: ERC-4626 compatible unified liquidity vault
 - **YToken<T>**: Share certificates representing user shares in specific vaults
 - **AdminCap**: Administrative capability for permission control
 
 #### Key Features:
-- **Single Active Vault**: Each asset type can only have one active vault at a time
-- **Vault State Management**: Support for pausing/resuming vaults
-- **Default Vault Selection**: Automatic default vault assignment for new vaults
+- **Single Vault Policy**: Each asset type can only have one vault maximum
+- **Vault State Management**: Support for pausing/resuming vaults (active/inactive states)
+- **Simplified Architecture**: Direct asset-to-vault mapping for better performance
 - **Version Control**: Protocol version management for upgrades
 
 ### 2. Error Handling System
@@ -115,8 +115,8 @@ sui client publish --gas-budget 100000000
 - [x] Basic functionality tests (`basic_tests.move`)
 - [x] **Registry System Implementation** (`liquidity.move`)
   - [x] Global asset vault registry
-  - [x] Multi-vault management with single active vault policy
-  - [x] Vault state management (active/paused)
+  - [x] Single vault per asset type policy
+  - [x] Vault state management (active/inactive)
   - [x] Administrative permission control
   - [x] Version control system
 - [x] **Comprehensive Test Suite**
@@ -143,8 +143,8 @@ sui client publish --gas-budget 100000000
 
 ### Registry-Vault Architecture
 - **Centralized Registry**: Single source of truth for all asset vaults
-- **Single Active Vault Policy**: Ensures consistency and reduces complexity
-- **State Management**: Comprehensive vault lifecycle management
+- **Single Vault Policy**: One vault per asset type ensures simplicity and consistency
+- **State Management**: Vault lifecycle management with active/inactive states
 - **Type Safety**: Full generic type support for different asset types
 
 ### Security Features

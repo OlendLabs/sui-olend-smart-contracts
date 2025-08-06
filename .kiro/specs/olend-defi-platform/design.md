@@ -5,7 +5,7 @@
 本设计文档基于需求1（统一流动性管理系统）和需求2（账户管理系统）的详细需求，设计了 Olend DeFi 借贷平台的核心架构。该设计采用模块化架构，确保系统的可扩展性、安全性和高效性。
 
 核心设计原则：
-- **统一流动性管理**：通过 Registry 和多 Vault 架构实现高效的资产管理
+- **统一流动性管理**：通过 Registry 和单 Vault 架构实现简洁高效的资产管理
 - **分层账户体系**：支持主账户和子账户的完整权限管理
 - **模块化设计**：各模块职责清晰，接口标准化
 - **安全优先**：多层安全机制确保资产和数据安全
@@ -20,7 +20,7 @@ graph TB
         Registry[Registry<br/>Share Object]
         Vault1[Vault&lt;SUI&gt;<br/>Share Object]
         Vault2[Vault&lt;USDC&gt;<br/>Share Object]
-        Vault3[Vault&lt;SUI&gt;-v2<br/>Share Object]
+
         YToken1[YToken&lt;SUI&gt;<br/>Owned Object]
         YToken2[YToken&lt;USDC&gt;<br/>Owned Object]
     end
@@ -41,7 +41,7 @@ graph TB
     
     Registry --> Vault1
     Registry --> Vault2
-    Registry --> Vault3
+
     Vault1 --> YToken1
     Vault2 --> YToken2
     
@@ -77,50 +77,49 @@ graph LR
 public struct Registry has key {
     id: UID,
     version: u64,
-    /// 资产类型到 Vault 列表的映射
-    asset_vaults: Table<TypeName, VaultList>,
+    /// 资产类型到 Vault 信息的映射
+    asset_vaults: Table<TypeName, VaultInfo>,
     /// 管理员权限
     admin_cap: ID,
 }
 
-/// 单个资产的 Vault 列表管理
-public struct VaultList has store {
-    /// 活跃的 Vault 列表
-    active_vaults: vector<ID>,
-    /// 默认 Vault（用于新存款）
-    default_vault: Option<ID>,
-    /// 暂停的 Vault 列表
-    paused_vaults: vector<ID>,
+/// 单个资产的 Vault 信息管理
+public struct VaultInfo has store {
+    /// 该资产类型的唯一 Vault ID
+    vault_id: ID,
+    /// Vault 是否处于活跃状态
+    is_active: bool,
 }
 ```
 
 **核心接口：**
 ```move
-// 创建新的 Vault
-public fun create_vault<T>(
+// 注册新的 Vault（每种资产只能有一个）
+public fun register_vault<T>(
     registry: &mut Registry,
-    admin_cap: &AdminCap,
-    ctx: &mut TxContext
-): ID
+    vault_id: ID,
+    admin_cap: &AdminCap
+)
 
-// 获取资产的默认活跃 Vault
+// 获取资产的 Vault（如果活跃）
 public fun get_default_vault<T>(registry: &Registry): Option<ID>
 
-// 获取资产的所有活跃 Vault
+// 获取资产的活跃 Vault 列表（最多一个）
 public fun get_active_vaults<T>(registry: &Registry): vector<ID>
 
-// 暂停 Vault
+// 暂停 Vault（设置为非活跃）
 public fun pause_vault<T>(
     registry: &mut Registry,
     vault_id: ID,
     admin_cap: &AdminCap
 )
 
-// 设置默认 Vault
-public fun set_default_vault<T>(
+// 恢复 Vault（设置为活跃）
+public fun resume_vault<T>(
     registry: &mut Registry,
     vault_id: ID,
-    admin_cap: &AdminCap
+    admin_cap: &AdminCap,
+    set_as_default: bool
 )
 ```
 

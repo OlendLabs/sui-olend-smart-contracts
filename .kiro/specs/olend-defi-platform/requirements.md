@@ -21,24 +21,24 @@ Olend 是一个基于 Sui Network 的去中心化借贷平台，使用 Sui Move 
 
 ##### Registry 管理需求
 1. WHEN 平台初始化 THEN 系统 SHALL 创建一个全局的 Registry Share object 作为主对象
-2. WHEN 需要为资产类型创建 Vault THEN Registry SHALL 支持同一资产类型创建多个 Vault<T> 实例
-3. WHEN 记录资产的 Vault 映射 THEN Registry SHALL 维护资产类型到 Vault<T> 列表的映射关系，而非单一映射
-4. WHEN 查询特定资产的活跃 Vault THEN Registry SHALL 提供机制返回该资产当前可用的 Vault<T> 实例列表
-5. WHEN 查询特定资产的默认 Vault THEN Registry SHALL 返回该资产类型的主要/推荐 Vault<T> 实例
-6. WHEN 现有 Vault 出现问题 THEN Registry SHALL 支持将该 Vault 标记为暂停状态并从活跃列表中移除
-7. WHEN 需要创建新的 Vault 替代问题 Vault THEN Registry SHALL 支持为同一资产创建新的 Vault<T> 并设置为默认 Vault
-8. WHEN 管理多个同类型 Vault THEN Registry SHALL 为每个 Vault 分配唯一标识符以便区分和管理
+2. WHEN 需要为资产类型创建 Vault THEN Registry SHALL 支持每种资产类型最多创建一个 Vault<T> 实例
+3. WHEN 记录资产的 Vault 映射 THEN Registry SHALL 维护资产类型到单个 Vault<T> 的直接映射关系
+4. WHEN 查询特定资产的 Vault THEN Registry SHALL 返回该资产类型对应的唯一 Vault<T> 实例（如果存在且活跃）
+5. WHEN 查询特定资产的默认 Vault THEN Registry SHALL 返回该资产类型的唯一 Vault<T> 实例（如果活跃）
+6. WHEN 现有 Vault 出现问题 THEN Registry SHALL 支持将该 Vault 标记为非活跃状态
+7. WHEN 需要替换问题 Vault THEN 系统 SHALL 要求先删除现有 Vault 才能创建新的 Vault<T>
+8. WHEN 尝试为已有 Vault 的资产创建新 Vault THEN Registry SHALL 拒绝创建并返回错误
 9. WHEN 系统升级 THEN Registry SHALL 通过 version 字段控制对所有 Vault 的访问权限
 10. WHEN Registry 版本更新 THEN 系统 SHALL 禁止旧版本的方法调用并要求 Share object 升级
 
 ##### Vault<T> 核心功能需求
-11. WHEN 用户存入某种资产 THEN 系统 SHALL 通过 Registry 查找该资产的默认活跃 Vault<T>
-12. WHEN 用户指定特定 Vault 存入资产 THEN 系统 SHALL 验证该 Vault 处于活跃状态并允许存入
+11. WHEN 用户存入某种资产 THEN 系统 SHALL 通过 Registry 查找该资产的唯一 Vault<T>
+12. WHEN 用户存入资产 THEN 系统 SHALL 验证该 Vault 处于活跃状态并允许存入
 13. WHEN 用户存入资产到 Vault<T> THEN 系统 SHALL 根据当前汇率计算并铸造相应数量的 YToken<T> 份额凭证
 14. WHEN 用户赎回资产 THEN 系统 SHALL 根据 YToken<T> 份额和当前汇率计算并返回相应数量的底层资产
 15. WHEN 计算份额汇率 THEN Vault<T> SHALL 使用公式：汇率 = 总资产价值 / 总份额数量
 16. WHEN Vault<T> 中资产价值发生变化 THEN 系统 SHALL 自动更新汇率以反映利息累积
-17. WHEN Vault<T> 被标记为有问题 THEN 系统 SHALL 阻止新的资产存入但允许现有用户提取资产
+17. WHEN Vault<T> 被标记为非活跃 THEN 系统 SHALL 阻止新的资产存入但允许现有用户提取资产
 
 ##### ERC-4626 兼容性需求
 11. WHEN 实现 Vault<T> THEN 系统 SHALL 遵循 ERC-4626 标准的接口设计
@@ -48,27 +48,27 @@ Olend 是一个基于 Sui Network 的去中心化借贷平台，使用 Sui Move 
 
 ##### 安全和风控需求
 18. WHEN 触发紧急情况 THEN Vault<T> SHALL 支持暂停所有 deposit 和 withdraw 操作
-19. WHEN Vault<T> 出现安全问题 THEN 管理员 SHALL 能够暂停该 Vault 的资产进入但保持资产提取功能
-20. WHEN Vault<T> 被暂停 THEN Registry SHALL 自动将其从活跃 Vault 列表中移除并停止向其导流新资产
-21. WHEN 需要替换问题 Vault THEN 系统 SHALL 支持创建新的 Vault<T> 并将其设置为该资产的新默认 Vault
+19. WHEN Vault<T> 出现安全问题 THEN 管理员 SHALL 能够将该 Vault 设置为非活跃状态阻止资产进入但保持资产提取功能
+20. WHEN Vault<T> 被设置为非活跃 THEN Registry SHALL 在查询时不返回该 Vault 并停止向其导流新资产
+21. WHEN 需要替换问题 Vault THEN 系统 SHALL 要求先删除现有 Vault 才能创建新的 Vault<T>
 22. WHEN 设置每日取出限额 THEN Vault<T> SHALL 记录每日已提取金额并在达到限额时阻止进一步提取
 23. WHEN 新的一天开始 THEN 系统 SHALL 自动重置每日提取限额计数器
 24. WHEN 系统升级 THEN 每个 Vault<T> SHALL 通过 version 字段控制访问权限并禁止旧版本方法调用
 
 ##### 模块间交互需求
-25. WHEN lending 模块需要资产操作 THEN 系统 SHALL 通过 Registry 获取活跃 Vault 并仅通过 Vault<T> 的 deposit 函数进行资产存入
-26. WHEN borrowing 模块需要借出资产 THEN 系统 SHALL 通过 Registry 获取活跃 Vault 并仅通过 Vault<T> 的 borrow 函数进行资产借出
-27. WHEN borrowing 模块需要还款 THEN 系统 SHALL 仅通过 Vault<T> 的 repay 函数进行资产归还（可以是任意 Vault）
+25. WHEN lending 模块需要资产操作 THEN 系统 SHALL 通过 Registry 获取该资产的唯一 Vault 并仅通过 Vault<T> 的 deposit 函数进行资产存入
+26. WHEN borrowing 模块需要借出资产 THEN 系统 SHALL 通过 Registry 获取该资产的唯一 Vault 并仅通过 Vault<T> 的 borrow 函数进行资产借出
+27. WHEN borrowing 模块需要还款 THEN 系统 SHALL 仅通过对应资产的 Vault<T> 的 repay 函数进行资产归还
 28. WHEN lending 模块需要提取资产 THEN 系统 SHALL 仅通过 Vault<T> 的 withdraw 函数进行资产提取（基于用户持有的 YToken 对应的 Vault）
 29. WHEN 其他模块调用 Vault<T> 函数 THEN 系统 SHALL 验证调用者具有 package 级别的访问权限
-30. WHEN 选择 Vault 进行操作 THEN 系统 SHALL 优先使用 Registry 中标记的默认 Vault，除非用户明确指定其他 Vault
+30. WHEN 选择 Vault 进行操作 THEN 系统 SHALL 使用 Registry 中该资产类型对应的唯一 Vault
 
 ##### 数据一致性需求
 31. WHEN 多个操作同时访问同一 Vault<T> THEN 系统 SHALL 确保操作的原子性和数据一致性
 32. WHEN Vault<T> 状态发生变化 THEN Registry SHALL 保持对该 Vault 引用的有效性
 33. WHEN 查询 Vault<T> 的总资产 THEN 系统 SHALL 实时计算包括借出资产在内的所有资产价值
-34. WHEN 同一资产存在多个 Vault THEN 系统 SHALL 确保各个 Vault 之间的独立性和数据隔离
-35. WHEN 迁移用户资产到新 Vault THEN 系统 SHALL 提供安全的资产迁移机制（如果需要的话）
+34. WHEN 每种资产只有一个 Vault THEN 系统 SHALL 确保该 Vault 的数据完整性和状态一致性
+35. WHEN 需要替换 Vault THEN 系统 SHALL 提供安全的 Vault 替换机制（需要先清空旧 Vault）
 
 ### 需求 2 - 账户管理系统
 
