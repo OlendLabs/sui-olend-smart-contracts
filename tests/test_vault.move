@@ -356,7 +356,7 @@ fun test_conversion_edge_cases() {
 
 /// Test error conditions - zero deposit
 #[test]
-#[expected_failure(abort_code = 1012)]
+#[expected_failure(abort_code = 1012, location = olend::vault)]
 fun test_zero_deposit_fails() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -374,7 +374,7 @@ fun test_zero_deposit_fails() {
 
 /// Test error conditions - insufficient assets for withdrawal
 #[test]
-#[expected_failure(abort_code = 1003)]
+#[expected_failure(abort_code = 1003, location = olend::vault)]
 fun test_insufficient_assets_withdrawal_fails() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -403,7 +403,7 @@ fun test_insufficient_assets_withdrawal_fails() {
 
 /// Test error conditions - paused vault operations
 #[test]
-#[expected_failure(abort_code = 1001)]
+#[expected_failure(abort_code = 1001, location = olend::vault)]
 fun test_paused_vault_deposit_fails() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -432,7 +432,7 @@ fun test_paused_vault_deposit_fails() {
 
 /// Test borrow function with insufficient available assets
 #[test]
-#[expected_failure(abort_code = 1003)]
+#[expected_failure(abort_code = 1003, location = olend::vault)]
 fun test_borrow_exceeds_available_assets() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -456,7 +456,7 @@ fun test_borrow_exceeds_available_assets() {
 
 /// Test borrow function with zero amount
 #[test]
-#[expected_failure(abort_code = 1012)]
+#[expected_failure(abort_code = 1012, location = olend::vault)]
 fun test_borrow_zero_amount() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -557,7 +557,7 @@ fun test_multiple_borrow_repay_cycles() {
 
 /// Test daily withdrawal limit exceeded
 #[test]
-#[expected_failure(abort_code = 1004)]
+#[expected_failure(abort_code = 1004, location = olend::vault)]
 fun test_daily_limit_exceeded() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -661,7 +661,7 @@ fun test_daily_limit_reset_simulation() {
 
 /// Test version mismatch in deposit operation
 #[test]
-#[expected_failure(abort_code = 1006)]
+#[expected_failure(abort_code = 1006, location = olend::vault)]
 fun test_version_mismatch_deposit() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -911,7 +911,7 @@ fun test_emergency_pause() {
 
 /// Test emergency pause blocks all operations
 #[test]
-#[expected_failure(abort_code = 1008)]
+#[expected_failure(abort_code = 1008, location = olend::vault)]
 fun test_emergency_pause_blocks_operations() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -1018,7 +1018,7 @@ fun test_vault_statistics() {
 
 /// Test invalid daily limit updates
 #[test]
-#[expected_failure(abort_code = 9001)]
+#[expected_failure(abort_code = 9001, location = olend::vault)]
 fun test_invalid_daily_limit_update() {
     let mut scenario = test_scenario::begin(ADMIN);
     

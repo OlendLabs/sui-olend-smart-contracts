@@ -294,7 +294,7 @@ fun test_set_default_vault() {
 
 /// Test permission verification - unauthorized admin attempts
 #[test]
-#[expected_failure(abort_code = 1007)]
+#[expected_failure(abort_code = 1007, location = olend::liquidity)]
 fun test_unauthorized_access() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -329,7 +329,7 @@ fun test_unauthorized_access() {
 
 /// Test pausing non-existent Vault
 #[test]
-#[expected_failure(abort_code = 1002)]
+#[expected_failure(abort_code = 1002, location = olend::liquidity)]
 fun test_pause_nonexistent_vault() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -354,7 +354,7 @@ fun test_pause_nonexistent_vault() {
 
 /// Test setting inactive Vault as default
 #[test]
-#[expected_failure(abort_code = 1008)]
+#[expected_failure(abort_code = 1008, location = olend::liquidity)]
 fun test_set_inactive_vault_as_default() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -382,7 +382,7 @@ fun test_set_inactive_vault_as_default() {
 
 /// Test that registering a second active Vault fails
 #[test]
-#[expected_failure(abort_code = 1013)]
+#[expected_failure(abort_code = 1013, location = olend::liquidity)]
 fun test_cannot_register_second_active_vault() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -472,7 +472,7 @@ fun test_registry_multiple_operations() {
 
 /// Test edge case: resume non-existent vault
 #[test]
-#[expected_failure(abort_code = 1002)]
+#[expected_failure(abort_code = 1002, location = olend::liquidity)]
 fun test_resume_nonexistent_vault() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -497,7 +497,7 @@ fun test_resume_nonexistent_vault() {
 
 /// Test edge case: set default for wrong vault ID
 #[test]
-#[expected_failure(abort_code = 1002)]
+#[expected_failure(abort_code = 1002, location = olend::liquidity)]
 fun test_set_default_wrong_vault_id() {
     let mut scenario = test_scenario::begin(ADMIN);
     
