@@ -11,7 +11,6 @@ use std::option;
 
 use olend::liquidity;
 use olend::constants;
-use olend::errors;
 
 // Mock asset types for testing
 public struct TestCoin has drop {}
@@ -77,9 +76,9 @@ fun test_register_vault() {
     test_scenario::end(scenario);
 }
 
-/// Test that only one active Vault can exist per asset type
+/// Test that only one Vault can exist per asset type
 #[test]
-fun test_single_active_vault_per_asset() {
+fun test_single_vault_per_asset() {
     let mut scenario = test_scenario::begin(ADMIN);
     
     // Initialize Registry for testing
@@ -92,7 +91,6 @@ fun test_single_active_vault_per_asset() {
     
     // 创建虚拟 Vault ID
     let vault_id_1 = object::id_from_address(@0x1);
-    let vault_id_2 = object::id_from_address(@0x2);
     
     // 注册第一个 Vault（自动成为默认）
     liquidity::register_vault<TestCoin>(&mut registry, vault_id_1, &admin_cap);
@@ -103,17 +101,23 @@ fun test_single_active_vault_per_asset() {
     assert!(*option::borrow(&liquidity::get_default_vault<TestCoin>(&registry)) == vault_id_1, 1);
     assert!(liquidity::is_vault_active<TestCoin>(&registry, vault_id_1), 2);
     
-    // 尝试注册第二个 Vault（应该失败，因为已经有活跃的 Vault）
-    // 这里我们不能直接测试失败，因为会中断测试，所以我们暂停第一个 Vault 后再注册
+    // 测试暂停和恢复功能
     liquidity::pause_vault<TestCoin>(&mut registry, vault_id_1, &admin_cap);
     
-    // 现在可以注册第二个 Vault
-    liquidity::register_vault<TestCoin>(&mut registry, vault_id_2, &admin_cap);
+    // 验证暂停状态
+    assert!(!liquidity::is_vault_active<TestCoin>(&registry, vault_id_1), 3);
+    assert!(option::is_none(&liquidity::get_default_vault<TestCoin>(&registry)), 4);
     
-    // 验证第二个 Vault 成为新的默认
-    assert!(*option::borrow(&liquidity::get_default_vault<TestCoin>(&registry)) == vault_id_2, 3);
-    assert!(liquidity::is_vault_active<TestCoin>(&registry, vault_id_2), 4);
-    assert!(!liquidity::is_vault_active<TestCoin>(&registry, vault_id_1), 5);
+    let paused_vaults = liquidity::get_paused_vaults<TestCoin>(&registry);
+    assert!(vector::length(&paused_vaults) == 1, 5);
+    assert!(*vector::borrow(&paused_vaults, 0) == vault_id_1, 6);
+    
+    // 恢复 Vault
+    liquidity::resume_vault<TestCoin>(&mut registry, vault_id_1, &admin_cap, true);
+    
+    // 验证恢复状态
+    assert!(liquidity::is_vault_active<TestCoin>(&registry, vault_id_1), 7);
+    assert!(*option::borrow(&liquidity::get_default_vault<TestCoin>(&registry)) == vault_id_1, 8);
     
     // 清理
     test_scenario::return_shared(registry);
@@ -290,7 +294,7 @@ fun test_set_default_vault() {
 
 /// Test permission verification - unauthorized admin attempts
 #[test]
-#[expected_failure(abort_code = olend::errors::unauthorized_access)]
+#[expected_failure(abort_code = 1007)]
 fun test_unauthorized_access() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -325,7 +329,7 @@ fun test_unauthorized_access() {
 
 /// Test pausing non-existent Vault
 #[test]
-#[expected_failure(abort_code = olend::errors::vault_not_found)]
+#[expected_failure(abort_code = 1002)]
 fun test_pause_nonexistent_vault() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -350,7 +354,7 @@ fun test_pause_nonexistent_vault() {
 
 /// Test setting inactive Vault as default
 #[test]
-#[expected_failure(abort_code = olend::errors::vault_not_active)]
+#[expected_failure(abort_code = 1008)]
 fun test_set_inactive_vault_as_default() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -378,7 +382,7 @@ fun test_set_inactive_vault_as_default() {
 
 /// Test that registering a second active Vault fails
 #[test]
-#[expected_failure(abort_code = olend::errors::vault_already_exists)]
+#[expected_failure(abort_code = 1013)]
 fun test_cannot_register_second_active_vault() {
     let mut scenario = test_scenario::begin(ADMIN);
     

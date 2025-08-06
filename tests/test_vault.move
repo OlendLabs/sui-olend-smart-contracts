@@ -356,7 +356,7 @@ fun test_conversion_edge_cases() {
 
 /// Test error conditions - zero deposit
 #[test]
-#[expected_failure(abort_code = olend::errors::zero_assets)]
+#[expected_failure(abort_code = 1012)]
 fun test_zero_deposit_fails() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -374,7 +374,7 @@ fun test_zero_deposit_fails() {
 
 /// Test error conditions - insufficient assets for withdrawal
 #[test]
-#[expected_failure(abort_code = olend::errors::insufficient_assets)]
+#[expected_failure(abort_code = 1003)]
 fun test_insufficient_assets_withdrawal_fails() {
     let mut scenario = test_scenario::begin(ADMIN);
     
@@ -403,7 +403,7 @@ fun test_insufficient_assets_withdrawal_fails() {
 
 /// Test error conditions - paused vault operations
 #[test]
-#[expected_failure(abort_code = olend::errors::vault_paused)]
+#[expected_failure(abort_code = 1001)]
 fun test_paused_vault_deposit_fails() {
     let mut scenario = test_scenario::begin(ADMIN);
     

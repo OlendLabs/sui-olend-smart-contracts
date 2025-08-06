@@ -1,9 +1,9 @@
 /// Liquidity Module - Registry management system
-/// Implements Registry for managing multiple Vaults per asset type
+/// Implements Registry for managing single Vault per asset type
 #[allow(duplicate_alias)]
 module olend::liquidity;
 
-use sui::object::{UID, ID};
+use sui::object::{Self, UID, ID};
 use sui::tx_context::{Self, TxContext};
 use sui::table::{Self, Table};
 use sui::transfer;
@@ -22,21 +22,19 @@ public struct Registry has key {
     id: UID,
     /// Protocol version for access control
     version: u64,
-    /// Mapping from asset types to their Vault lists
-    asset_vaults: Table<TypeName, VaultList>,
+    /// Mapping from asset types to their Vault information
+    asset_vaults: Table<TypeName, VaultInfo>,
     /// Admin capability ID for permission control
     admin_cap_id: ID,
 }
 
-/// Vault list management for a single asset type
-/// Supports multiple Vault instances for the same asset type
-public struct VaultList has store {
-    /// List of active Vaults
-    active_vaults: vector<ID>,
-    /// Default Vault for new deposits
-    default_vault: Option<ID>,
-    /// List of paused Vaults
-    paused_vaults: vector<ID>,
+/// Vault information for a single asset type
+/// Each asset type can only have one Vault at a time
+public struct VaultInfo has store {
+    /// The single Vault ID for this asset type
+    vault_id: ID,
+    /// Whether the Vault is currently active
+    is_active: bool,
 }
 
 /// Admin capability for permission control
@@ -98,8 +96,7 @@ public fun init_for_testing(ctx: &mut TxContext) {
 // ===== Vault Management Functions =====
 
 /// Creates a new Vault entry for the specified asset type
-/// Only allows creating a new Vault if no active Vaults exist for this asset type
-/// The new Vault automatically becomes the default Vault
+/// Only allows creating one Vault per asset type
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
@@ -121,33 +118,19 @@ public fun register_vault<T>(
     
     let asset_type = type_name::get<T>();
     
-    // Check if Vault list already exists for this asset type
-    if (table::contains(&registry.asset_vaults, asset_type)) {
-        let vault_list = table::borrow(&registry.asset_vaults, asset_type);
-        
-        // Check if there are any active Vaults - if so, cannot create new Vault
-        assert!(vector::is_empty(&vault_list.active_vaults), errors::vault_already_exists());
-        
-        // If no active Vaults, we can create a new one
-        let vault_list = table::borrow_mut(&mut registry.asset_vaults, asset_type);
-        vector::push_back(&mut vault_list.active_vaults, vault_id);
-        vault_list.default_vault = option::some(vault_id);
-    } else {
-        // Create new Vault list with the new Vault as default
-        let mut active_vaults = vector::empty<ID>();
-        vector::push_back(&mut active_vaults, vault_id);
-        
-        let vault_list = VaultList {
-            active_vaults,
-            default_vault: option::some(vault_id),
-            paused_vaults: vector::empty<ID>(),
-        };
-        
-        table::add(&mut registry.asset_vaults, asset_type, vault_list);
+    // Check if a Vault already exists for this asset type
+    assert!(!table::contains(&registry.asset_vaults, asset_type), errors::vault_already_exists());
+    
+    // Create new Vault info
+    let vault_info = VaultInfo {
+        vault_id,
+        is_active: true,
     };
+    
+    table::add(&mut registry.asset_vaults, asset_type, vault_info);
 }
 
-/// Gets the default active Vault for the specified asset type
+/// Gets the Vault for the specified asset type (if active)
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
@@ -156,13 +139,17 @@ public fun register_vault<T>(
 /// * `registry` - Reference to the registry
 /// 
 /// # Returns
-/// * `Option<ID>` - ID of the default Vault, or None if it doesn't exist
+/// * `Option<ID>` - ID of the Vault if it exists and is active, or None
 public fun get_default_vault<T>(registry: &Registry): Option<ID> {
     let asset_type = type_name::get<T>();
     
     if (table::contains(&registry.asset_vaults, asset_type)) {
-        let vault_list = table::borrow(&registry.asset_vaults, asset_type);
-        vault_list.default_vault
+        let vault_info = table::borrow(&registry.asset_vaults, asset_type);
+        if (vault_info.is_active) {
+            option::some(vault_info.vault_id)
+        } else {
+            option::none<ID>()
+        }
     } else {
         option::none<ID>()
     }
@@ -177,20 +164,26 @@ public fun get_default_vault<T>(registry: &Registry): Option<ID> {
 /// * `registry` - Reference to the registry
 /// 
 /// # Returns
-/// * `vector<ID>` - List of active Vault IDs
+/// * `vector<ID>` - List of active Vault IDs (at most one)
 public fun get_active_vaults<T>(registry: &Registry): vector<ID> {
     let asset_type = type_name::get<T>();
     
     if (table::contains(&registry.asset_vaults, asset_type)) {
-        let vault_list = table::borrow(&registry.asset_vaults, asset_type);
-        vault_list.active_vaults
+        let vault_info = table::borrow(&registry.asset_vaults, asset_type);
+        if (vault_info.is_active) {
+            let mut result = vector::empty<ID>();
+            vector::push_back(&mut result, vault_info.vault_id);
+            result
+        } else {
+            vector::empty<ID>()
+        }
     } else {
         vector::empty<ID>()
     }
 }
 
 /// Pauses the specified Vault
-/// Moves the Vault from active list to paused list
+/// Sets the Vault status to inactive
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
@@ -215,28 +208,17 @@ public fun pause_vault<T>(
     // Check if asset type exists
     assert!(table::contains(&registry.asset_vaults, asset_type), errors::vault_not_found());
     
-    let vault_list = table::borrow_mut(&mut registry.asset_vaults, asset_type);
+    let vault_info = table::borrow_mut(&mut registry.asset_vaults, asset_type);
     
-    // Find and remove from active list
-    let (found, index) = vector::index_of(&vault_list.active_vaults, &vault_id);
-    assert!(found, errors::vault_not_found());
+    // Verify the Vault ID matches
+    assert!(vault_info.vault_id == vault_id, errors::vault_not_found());
     
-    vector::remove(&mut vault_list.active_vaults, index);
-    
-    // Add to paused list
-    vector::push_back(&mut vault_list.paused_vaults, vault_id);
-    
-    // Clear default setting if the paused Vault was the default
-    if (option::is_some(&vault_list.default_vault)) {
-        let default_id = *option::borrow(&vault_list.default_vault);
-        if (default_id == vault_id) {
-            vault_list.default_vault = option::none<ID>();
-        };
-    };
+    // Set as inactive
+    vault_info.is_active = false;
 }
 
 /// Resumes a paused Vault
-/// Moves the Vault from paused list back to active list
+/// Sets the Vault status to active
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
@@ -245,7 +227,7 @@ public fun pause_vault<T>(
 /// * `registry` - Mutable reference to the registry
 /// * `vault_id` - ID of the Vault to resume
 /// * `admin_cap` - Admin capability for authorization
-/// * `set_as_default` - Whether to set as the default Vault
+/// * `set_as_default` - Whether to set as the default Vault (ignored since there's only one Vault per asset)
 public fun resume_vault<T>(
     registry: &mut Registry,
     vault_id: ID,
@@ -263,24 +245,20 @@ public fun resume_vault<T>(
     // Check if asset type exists
     assert!(table::contains(&registry.asset_vaults, asset_type), errors::vault_not_found());
     
-    let vault_list = table::borrow_mut(&mut registry.asset_vaults, asset_type);
+    let vault_info = table::borrow_mut(&mut registry.asset_vaults, asset_type);
     
-    // Find and remove from paused list
-    let (found, index) = vector::index_of(&vault_list.paused_vaults, &vault_id);
-    assert!(found, errors::vault_not_found());
+    // Verify the Vault ID matches
+    assert!(vault_info.vault_id == vault_id, errors::vault_not_found());
     
-    vector::remove(&mut vault_list.paused_vaults, index);
+    // Set as active
+    vault_info.is_active = true;
     
-    // Add to active list
-    vector::push_back(&mut vault_list.active_vaults, vault_id);
-    
-    // Set as default if requested
-    if (set_as_default) {
-        vault_list.default_vault = option::some(vault_id);
-    };
+    // Note: set_as_default parameter is ignored since there's only one Vault per asset type
+    let _ = set_as_default;
 }
 
 /// Sets the default Vault for the specified asset type
+/// Since there's only one Vault per asset type, this function mainly validates the Vault exists and is active
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
@@ -305,13 +283,14 @@ public fun set_default_vault<T>(
     // Check if asset type exists
     assert!(table::contains(&registry.asset_vaults, asset_type), errors::vault_not_found());
     
-    let vault_list = table::borrow_mut(&mut registry.asset_vaults, asset_type);
+    let vault_info = table::borrow(&registry.asset_vaults, asset_type);
     
-    // Verify Vault is in active list
-    assert!(vector::contains(&vault_list.active_vaults, &vault_id), errors::vault_not_active());
+    // Verify the Vault ID matches and is active
+    assert!(vault_info.vault_id == vault_id, errors::vault_not_found());
+    assert!(vault_info.is_active, errors::vault_not_active());
     
-    // Set as default Vault
-    vault_list.default_vault = option::some(vault_id);
+    // Since there's only one Vault per asset type, it's automatically the default when active
+    // This function mainly serves as a validation
 }
 
 // ===== Query Functions =====
@@ -340,13 +319,19 @@ public fun has_vaults<T>(registry: &Registry): bool {
 /// * `registry` - Reference to the registry
 /// 
 /// # Returns
-/// * `vector<ID>` - List of paused Vault IDs
+/// * `vector<ID>` - List of paused Vault IDs (at most one)
 public fun get_paused_vaults<T>(registry: &Registry): vector<ID> {
     let asset_type = type_name::get<T>();
     
     if (table::contains(&registry.asset_vaults, asset_type)) {
-        let vault_list = table::borrow(&registry.asset_vaults, asset_type);
-        vault_list.paused_vaults
+        let vault_info = table::borrow(&registry.asset_vaults, asset_type);
+        if (!vault_info.is_active) {
+            let mut result = vector::empty<ID>();
+            vector::push_back(&mut result, vault_info.vault_id);
+            result
+        } else {
+            vector::empty<ID>()
+        }
     } else {
         vector::empty<ID>()
     }
@@ -367,8 +352,8 @@ public fun is_vault_active<T>(registry: &Registry, vault_id: ID): bool {
     let asset_type = type_name::get<T>();
     
     if (table::contains(&registry.asset_vaults, asset_type)) {
-        let vault_list = table::borrow(&registry.asset_vaults, asset_type);
-        vector::contains(&vault_list.active_vaults, &vault_id)
+        let vault_info = table::borrow(&registry.asset_vaults, asset_type);
+        vault_info.vault_id == vault_id && vault_info.is_active
     } else {
         false
     }
@@ -399,8 +384,8 @@ public fun get_admin_cap_id(registry: &Registry): ID {
 // ===== Test Helper Functions =====
 
 #[test_only]
-/// Test access function to get VaultList
-public fun get_vault_list_for_test<T>(registry: &Registry): &VaultList {
+/// Test access function to get VaultInfo
+public fun get_vault_info_for_test<T>(registry: &Registry): &VaultInfo {
     let asset_type = type_name::get<T>();
     table::borrow(&registry.asset_vaults, asset_type)
 }
