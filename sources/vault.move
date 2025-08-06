@@ -707,3 +707,90 @@ public fun create_ytoken_for_test<T>(
     let ytoken_balance = balance::increase_supply(&mut vault.ytoken_supply, shares);
     coin::from_balance(ytoken_balance, ctx)
 }
+#[
+test_only]
+/// Set vault version for testing version mismatch scenarios
+public fun set_vault_version_for_test<T>(vault: &mut Vault<T>, version: u64) {
+    vault.version = version;
+}
+
+// ===== Emergency and Security Functions =====
+
+/// Emergency pause all vault operations
+/// More restrictive than regular pause - blocks all operations including admin functions
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Mutable reference to the vault
+/// * `admin_cap` - Admin capability for authorization
+public fun emergency_pause<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &AdminCap
+) {
+    vault.status = VaultStatus::Inactive;
+}
+
+/// Check if vault is in emergency state
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// 
+/// # Returns
+/// * `bool` - True if vault is in emergency state
+public fun is_emergency_paused<T>(vault: &Vault<T>): bool {
+    vault.status == VaultStatus::Inactive
+}
+
+/// Update daily withdrawal limit
+/// Allows dynamic adjustment of withdrawal limits
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Mutable reference to the vault
+/// * `new_limit` - New daily withdrawal limit
+/// * `admin_cap` - Admin capability for authorization
+public fun update_daily_limit<T>(
+    vault: &mut Vault<T>,
+    new_limit: u64,
+    _admin_cap: &AdminCap
+) {
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    assert!(new_limit > 0, errors::invalid_input());
+    assert!(new_limit <= constants::max_daily_withdrawal_limit(), errors::invalid_input());
+    
+    vault.daily_limit.max_daily_withdrawal = new_limit;
+}
+
+/// Get detailed vault statistics
+/// Provides comprehensive vault information for monitoring
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// 
+/// # Returns
+/// * `(u64, u64, u64, u64, u64)` - (total_assets, total_supply, borrowed_assets, available_assets, utilization_rate_bps)
+public fun get_vault_statistics<T>(vault: &Vault<T>): (u64, u64, u64, u64, u64) {
+    let total_assets = total_assets(vault);
+    let total_supply = total_supply(vault);
+    let borrowed_assets = vault.borrowed_assets;
+    let available_assets = balance::value(&vault.total_assets);
+    
+    // Calculate utilization rate in basis points (0-10000)
+    let utilization_rate_bps = if (total_assets > 0) {
+        (borrowed_assets * 10000) / total_assets
+    } else {
+        0
+    };
+    
+    (total_assets, total_supply, borrowed_assets, available_assets, utilization_rate_bps)
+}

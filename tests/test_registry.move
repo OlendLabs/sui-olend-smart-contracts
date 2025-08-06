@@ -407,3 +407,118 @@ fun test_cannot_register_second_active_vault() {
     test_scenario::return_to_sender(&scenario, admin_cap);
     test_scenario::end(scenario);
 }
+
+// ===== Additional Registry Tests =====
+
+/// Test version control in registry operations
+#[test]
+fun test_registry_version_control() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry for testing
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    // Get shared Registry and AdminCap
+    let registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    
+    // Verify version is current
+    assert!(liquidity::get_version(&registry) == constants::current_version(), 0);
+    
+    // Cleanup
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test registry with multiple asset types and operations
+#[test]
+fun test_registry_multiple_operations() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry for testing
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    // Get shared Registry and AdminCap
+    let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    
+    // Register vaults for multiple asset types
+    let sui_vault_id = object::id_from_address(@0x1);
+    let usdc_vault_id = object::id_from_address(@0x2);
+    
+    liquidity::register_vault<TestCoin>(&mut registry, sui_vault_id, &admin_cap);
+    liquidity::register_vault<AnotherCoin>(&mut registry, usdc_vault_id, &admin_cap);
+    
+    // Test pause and resume operations
+    liquidity::pause_vault<TestCoin>(&mut registry, sui_vault_id, &admin_cap);
+    assert!(!liquidity::is_vault_active<TestCoin>(&registry, sui_vault_id), 0);
+    assert!(liquidity::is_vault_active<AnotherCoin>(&registry, usdc_vault_id), 1);
+    
+    liquidity::resume_vault<TestCoin>(&mut registry, sui_vault_id, &admin_cap, true);
+    assert!(liquidity::is_vault_active<TestCoin>(&registry, sui_vault_id), 2);
+    
+    // Verify both vaults are now active
+    assert!(liquidity::is_vault_active<TestCoin>(&registry, sui_vault_id), 3);
+    assert!(liquidity::is_vault_active<AnotherCoin>(&registry, usdc_vault_id), 4);
+    
+    // Cleanup
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test edge case: resume non-existent vault
+#[test]
+#[expected_failure(abort_code = 1002)]
+fun test_resume_nonexistent_vault() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry for testing
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    // Get shared Registry and AdminCap
+    let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    
+    let vault_id = object::id_from_address(@0x1);
+    
+    // Try to resume non-existent vault (should fail)
+    liquidity::resume_vault<TestCoin>(&mut registry, vault_id, &admin_cap, true);
+    
+    // Cleanup
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test edge case: set default for wrong vault ID
+#[test]
+#[expected_failure(abort_code = 1002)]
+fun test_set_default_wrong_vault_id() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry for testing
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    // Get shared Registry and AdminCap
+    let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    
+    // Register a vault
+    let vault_id_1 = object::id_from_address(@0x1);
+    liquidity::register_vault<TestCoin>(&mut registry, vault_id_1, &admin_cap);
+    
+    // Try to set default with wrong vault ID (should fail)
+    let wrong_vault_id = object::id_from_address(@0x999);
+    liquidity::set_default_vault<TestCoin>(&mut registry, wrong_vault_id, &admin_cap);
+    
+    // Cleanup
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
