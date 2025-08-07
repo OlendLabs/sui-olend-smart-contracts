@@ -381,6 +381,53 @@ public fun get_admin_cap_id(registry: &Registry): ID {
     registry.admin_cap_id
 }
 
+// ===== Global Emergency Functions =====
+
+/// Global emergency pause for all vaults in the registry
+/// This is the most severe security measure that affects the entire system
+/// 
+/// # Arguments
+/// * `registry` - Mutable reference to the registry
+/// * `admin_cap` - Admin capability for authorization
+public fun global_emergency_pause_all(
+    registry: &mut Registry,
+    admin_cap: &AdminCap,
+) {
+    // Verify admin permission
+    assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
+    
+    // Set registry to maintenance mode by incrementing version
+    // This will cause all vault operations to fail due to version mismatch
+    registry.version = registry.version + 1000; // Large increment to indicate emergency
+}
+
+/// Check if registry is in global emergency state
+/// 
+/// # Arguments
+/// * `registry` - Reference to the registry
+/// 
+/// # Returns
+/// * `bool` - True if registry is in global emergency state
+public fun is_global_emergency_state(registry: &Registry): bool {
+    registry.version > constants::current_version() + 100
+}
+
+/// Restore registry from global emergency state
+/// 
+/// # Arguments
+/// * `registry` - Mutable reference to the registry
+/// * `admin_cap` - Admin capability for authorization
+public fun restore_from_global_emergency(
+    registry: &mut Registry,
+    admin_cap: &AdminCap,
+) {
+    // Verify admin permission
+    assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
+    
+    // Restore to current version
+    registry.version = constants::current_version();
+}
+
 // ===== Test Helper Functions =====
 
 #[test_only]

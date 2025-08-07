@@ -718,6 +718,7 @@ public fun set_vault_version_for_test<T>(vault: &mut Vault<T>, version: u64) {
 
 /// Emergency pause all vault operations
 /// More restrictive than regular pause - blocks all operations including admin functions
+/// This is the most severe security measure that completely disables the vault
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
@@ -729,7 +730,27 @@ public fun emergency_pause<T>(
     vault: &mut Vault<T>,
     _admin_cap: &AdminCap
 ) {
+    // Emergency pause bypasses version checks for security reasons
     vault.status = VaultStatus::Inactive;
+}
+
+/// Global emergency pause for all operations
+/// Even more restrictive than emergency_pause - also prevents admin operations
+/// Should only be used in critical security situations
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Mutable reference to the vault
+/// * `admin_cap` - Admin capability for authorization
+public fun global_emergency_pause<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &AdminCap
+) {
+    // Set vault to inactive and reset daily limits for security
+    vault.status = VaultStatus::Inactive;
+    vault.daily_limit.withdrawn_today = vault.daily_limit.max_daily_withdrawal; // Block all withdrawals
 }
 
 /// Check if vault is in emergency state
@@ -744,6 +765,22 @@ public fun emergency_pause<T>(
 /// * `bool` - True if vault is in emergency state
 public fun is_emergency_paused<T>(vault: &Vault<T>): bool {
     vault.status == VaultStatus::Inactive
+}
+
+/// Check if vault is in global emergency state
+/// Checks both status and daily limit exhaustion
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// 
+/// # Returns
+/// * `bool` - True if vault is in global emergency state
+public fun is_global_emergency_paused<T>(vault: &Vault<T>): bool {
+    vault.status == VaultStatus::Inactive && 
+    vault.daily_limit.withdrawn_today >= vault.daily_limit.max_daily_withdrawal
 }
 
 /// Update daily withdrawal limit
@@ -793,4 +830,128 @@ public fun get_vault_statistics<T>(vault: &Vault<T>): (u64, u64, u64, u64, u64) 
     };
     
     (total_assets, total_supply, borrowed_assets, available_assets, utilization_rate_bps)
+}
+
+/// Reset daily withdrawal limit (admin only)
+/// Allows manual reset of daily limits in case of emergency or system issues
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Mutable reference to the vault
+/// * `admin_cap` - Admin capability for authorization
+public fun reset_daily_limit<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &AdminCap
+) {
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    
+    vault.daily_limit.withdrawn_today = 0;
+}
+
+/// Force update daily limit day counter (admin only)
+/// Allows manual day counter update for testing or emergency situations
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Mutable reference to the vault
+/// * `new_day` - New day counter value
+/// * `admin_cap` - Admin capability for authorization
+public fun force_update_day_counter<T>(
+    vault: &mut Vault<T>,
+    new_day: u64,
+    _admin_cap: &AdminCap
+) {
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    
+    vault.daily_limit.current_day = new_day;
+    vault.daily_limit.withdrawn_today = 0; // Reset withdrawn amount for new day
+}
+
+/// Check if daily withdrawal limit allows the specified amount
+/// Utility function for pre-checking withdrawal limits
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `amount` - Amount to check
+/// * `ctx` - Transaction context for day calculation
+/// 
+/// # Returns
+/// * `bool` - True if the amount is within daily limits
+public fun check_daily_limit<T>(
+    vault: &Vault<T>,
+    amount: u64,
+    ctx: &tx_context::TxContext
+): bool {
+    let current_day = utils::get_current_day(ctx);
+    
+    // If it's a new day, the limit is reset
+    if (current_day != vault.daily_limit.current_day) {
+        amount <= vault.daily_limit.max_daily_withdrawal
+    } else {
+        vault.daily_limit.withdrawn_today + amount <= vault.daily_limit.max_daily_withdrawal
+    }
+}
+
+/// Get remaining daily withdrawal limit
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `ctx` - Transaction context for day calculation
+/// 
+/// # Returns
+/// * `u64` - Remaining withdrawal amount for today
+public fun get_remaining_daily_limit<T>(
+    vault: &Vault<T>,
+    ctx: &tx_context::TxContext
+): u64 {
+    let current_day = utils::get_current_day(ctx);
+    
+    // If it's a new day, full limit is available
+    if (current_day != vault.daily_limit.current_day) {
+        vault.daily_limit.max_daily_withdrawal
+    } else {
+        if (vault.daily_limit.withdrawn_today >= vault.daily_limit.max_daily_withdrawal) {
+            0
+        } else {
+            vault.daily_limit.max_daily_withdrawal - vault.daily_limit.withdrawn_today
+        }
+    }
+}
+
+/// Comprehensive security status check
+/// Returns detailed security information about the vault
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `ctx` - Transaction context
+/// 
+/// # Returns
+/// * `(bool, bool, bool, bool, u64, u64)` - (is_active, is_paused, emergency_paused, daily_limit_exceeded, remaining_limit, utilization_rate_bps)
+public fun get_security_status<T>(
+    vault: &Vault<T>,
+    ctx: &tx_context::TxContext
+): (bool, bool, bool, bool, u64, u64) {
+    let is_active = is_vault_active(vault);
+    let is_paused = is_vault_paused(vault);
+    let emergency_paused = is_emergency_paused(vault);
+    
+    let remaining_limit = get_remaining_daily_limit(vault, ctx);
+    let daily_limit_exceeded = remaining_limit == 0;
+    
+    let (_, _, _, _, utilization_rate_bps) = get_vault_statistics(vault);
+    
+    (is_active, is_paused, emergency_paused, daily_limit_exceeded, remaining_limit, utilization_rate_bps)
 }

@@ -11,6 +11,7 @@ use sui::test_utils;
 use olend::liquidity;
 use olend::vault;
 use olend::errors;
+use olend::constants;
 
 // Mock coin type for testing
 public struct TestCoin has drop {}
@@ -1034,6 +1035,462 @@ fun test_invalid_daily_limit_update() {
     
     // Cleanup
     test_utils::destroy(vault);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+// ===== Enhanced Security Control Tests =====
+
+/// Test enhanced emergency pause functionality
+#[test]
+fun test_enhanced_emergency_pause() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
+    
+    // Verify vault is initially active
+    assert!(vault::is_vault_active(&vault), 0);
+    assert!(!vault::is_emergency_paused(&vault), 1);
+    
+    // Perform emergency pause
+    vault::emergency_pause(&mut vault, &admin_cap);
+    
+    // Verify emergency pause state
+    assert!(!vault::is_vault_active(&vault), 2);
+    assert!(vault::is_emergency_paused(&vault), 3);
+    assert!(!vault::deposits_allowed(&vault), 4);
+    assert!(!vault::withdrawals_allowed(&vault), 5);
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test global emergency pause functionality
+#[test]
+fun test_global_emergency_pause() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
+    
+    // Verify vault is initially active
+    assert!(!vault::is_global_emergency_paused(&vault), 0);
+    
+    // Perform global emergency pause
+    vault::global_emergency_pause(&mut vault, &admin_cap);
+    
+    // Verify global emergency pause state
+    assert!(vault::is_emergency_paused(&vault), 1);
+    assert!(vault::is_global_emergency_paused(&vault), 2);
+    
+    // Verify daily limit is exhausted
+    let (max_limit, _, withdrawn_today) = vault::get_daily_limit(&vault);
+    assert!(withdrawn_today == max_limit, 3);
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test daily limit management functions
+#[test]
+fun test_daily_limit_management() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Deposit some assets first
+    let deposit_amount = 2000;
+    let test_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let mut ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
+    
+    // Test check_daily_limit function
+    assert!(vault::check_daily_limit(&vault, 500, test_scenario::ctx(&mut scenario)), 0);
+    assert!(vault::check_daily_limit(&vault, 1000, test_scenario::ctx(&mut scenario)), 1);
+    assert!(!vault::check_daily_limit(&vault, 1500, test_scenario::ctx(&mut scenario)), 2);
+    
+    // Test get_remaining_daily_limit function
+    let remaining = vault::get_remaining_daily_limit(&vault, test_scenario::ctx(&mut scenario));
+    assert!(remaining == 1000, 3);
+    
+    // Perform a withdrawal to update daily limit
+    let withdraw_amount = 300;
+    let ytoken_to_withdraw = coin::split(&mut ytoken, withdraw_amount, test_scenario::ctx(&mut scenario));
+    let withdrawn_coin = vault::withdraw(&mut vault, ytoken_to_withdraw, test_scenario::ctx(&mut scenario));
+    
+    // Check remaining limit after withdrawal
+    let remaining_after = vault::get_remaining_daily_limit(&vault, test_scenario::ctx(&mut scenario));
+    assert!(remaining_after == 700, 4);
+    
+    // Test reset_daily_limit function
+    vault::reset_daily_limit(&mut vault, &admin_cap);
+    let remaining_after_reset = vault::get_remaining_daily_limit(&vault, test_scenario::ctx(&mut scenario));
+    assert!(remaining_after_reset == 1000, 5);
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_utils::destroy(ytoken);
+    test_utils::destroy(withdrawn_coin);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test enhanced update daily limit functionality
+#[test]
+fun test_enhanced_update_daily_limit() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Verify initial daily limit
+    let (initial_limit, _, _) = vault::get_daily_limit(&vault);
+    assert!(initial_limit == 1000, 0);
+    
+    // Update daily limit
+    let new_limit = 2000;
+    vault::update_daily_limit(&mut vault, new_limit, &admin_cap);
+    
+    // Verify updated daily limit
+    let (updated_limit, _, _) = vault::get_daily_limit(&vault);
+    assert!(updated_limit == new_limit, 1);
+    
+    // Test remaining limit with new limit
+    let remaining = vault::get_remaining_daily_limit(&vault, test_scenario::ctx(&mut scenario));
+    assert!(remaining == new_limit, 2);
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test force update day counter functionality
+#[test]
+fun test_force_update_day_counter() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Deposit and withdraw to set some daily usage
+    let deposit_amount = 1500;
+    let test_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let mut ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
+    
+    let withdraw_amount = 500;
+    let ytoken_to_withdraw = coin::split(&mut ytoken, withdraw_amount, test_scenario::ctx(&mut scenario));
+    let withdrawn_coin = vault::withdraw(&mut vault, ytoken_to_withdraw, test_scenario::ctx(&mut scenario));
+    
+    // Verify daily usage
+    let (_, current_day, withdrawn_today) = vault::get_daily_limit(&vault);
+    assert!(withdrawn_today == withdraw_amount, 0);
+    
+    // Force update day counter
+    let new_day = current_day + 1;
+    vault::force_update_day_counter(&mut vault, new_day, &admin_cap);
+    
+    // Verify day counter update and reset
+    let (_, updated_day, withdrawn_after_update) = vault::get_daily_limit(&vault);
+    assert!(updated_day == new_day, 1);
+    assert!(withdrawn_after_update == 0, 2); // Should be reset
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_utils::destroy(ytoken);
+    test_utils::destroy(withdrawn_coin);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test comprehensive security status check
+#[test]
+fun test_security_status_check() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Test initial security status
+    let (is_active, is_paused, emergency_paused, daily_limit_exceeded, remaining_limit, utilization_rate) = 
+        vault::get_security_status(&vault, test_scenario::ctx(&mut scenario));
+    
+    assert!(is_active, 0);
+    assert!(!is_paused, 1);
+    assert!(!emergency_paused, 2);
+    assert!(!daily_limit_exceeded, 3);
+    assert!(remaining_limit == 1000, 4);
+    assert!(utilization_rate == 0, 5);
+    
+    // Add some assets and borrow to change utilization
+    let deposit_amount = 1000;
+    let test_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
+    
+    let borrow_amount = 300;
+    let borrowed_coin = vault::borrow(&mut vault, borrow_amount, test_scenario::ctx(&mut scenario));
+    
+    // Test security status with utilization
+    let (_, _, _, _, _, utilization_rate_after) = 
+        vault::get_security_status(&vault, test_scenario::ctx(&mut scenario));
+    
+    // Utilization should be 30% = 3000 basis points
+    assert!(utilization_rate_after == 3000, 6);
+    
+    // Test emergency pause effect on security status
+    vault::emergency_pause(&mut vault, &admin_cap);
+    let (is_active_after, _, emergency_paused_after, _, _, _) = 
+        vault::get_security_status(&vault, test_scenario::ctx(&mut scenario));
+    
+    assert!(!is_active_after, 7);
+    assert!(emergency_paused_after, 8);
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_utils::destroy(ytoken);
+    test_utils::destroy(borrowed_coin);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test emergency pause blocks all operations
+#[test]
+#[expected_failure(abort_code = 1008, location = olend::vault)]
+fun test_emergency_pause_blocks_deposit() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Emergency pause the vault
+    vault::emergency_pause(&mut vault, &admin_cap);
+    
+    // Try to deposit (should fail)
+    let test_coin = coin::mint_for_testing<TestCoin>(100, test_scenario::ctx(&mut scenario));
+    let ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_utils::destroy(ytoken);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test emergency pause blocks withdrawal
+#[test]
+#[expected_failure(abort_code = 1008, location = olend::vault)]
+fun test_emergency_pause_blocks_withdrawal() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Deposit first
+    let test_coin = coin::mint_for_testing<TestCoin>(100, test_scenario::ctx(&mut scenario));
+    let ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
+    
+    // Emergency pause the vault
+    vault::emergency_pause(&mut vault, &admin_cap);
+    
+    // Try to withdraw (should fail)
+    let withdrawn_coin = vault::withdraw(&mut vault, ytoken, test_scenario::ctx(&mut scenario));
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_utils::destroy(withdrawn_coin);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test emergency pause blocks borrow
+#[test]
+#[expected_failure(abort_code = 1008, location = olend::vault)]
+fun test_emergency_pause_blocks_borrow() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Deposit first
+    let test_coin = coin::mint_for_testing<TestCoin>(100, test_scenario::ctx(&mut scenario));
+    let ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
+    
+    // Emergency pause the vault
+    vault::emergency_pause(&mut vault, &admin_cap);
+    
+    // Try to borrow (should fail)
+    let borrowed_coin = vault::borrow(&mut vault, 50, test_scenario::ctx(&mut scenario));
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_utils::destroy(ytoken);
+    test_utils::destroy(borrowed_coin);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test enhanced invalid daily limit update
+#[test]
+#[expected_failure(abort_code = 9001, location = olend::vault)]
+fun test_enhanced_invalid_daily_limit_update() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Try to set zero daily limit (should fail)
+    vault::update_daily_limit(&mut vault, 0, &admin_cap);
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test daily limit exceeds maximum allowed
+#[test]
+#[expected_failure(abort_code = 9001, location = olend::vault)]
+fun test_daily_limit_exceeds_maximum() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Try to set daily limit above maximum (should fail)
+    let max_limit = constants::max_daily_withdrawal_limit();
+    vault::update_daily_limit(&mut vault, max_limit + 1, &admin_cap);
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test version mismatch in security functions
+#[test]
+#[expected_failure(abort_code = 1006, location = olend::vault)]
+fun test_version_mismatch_in_security_functions() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
+    
+    // Set vault to an older version
+    vault::set_vault_version_for_test(&mut vault, 0);
+    
+    // Try to reset daily limit (should fail due to version mismatch)
+    vault::reset_daily_limit(&mut vault, &admin_cap);
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test comprehensive daily limit workflow
+#[test]
+fun test_comprehensive_daily_limit_workflow() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry and get AdminCap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let daily_limit = 1000;
+    let mut vault = vault::create_vault_for_test<TestCoin>(daily_limit, test_scenario::ctx(&mut scenario));
+    
+    // Deposit assets
+    let deposit_amount = 2000;
+    let test_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let mut ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
+    
+    // Test multiple withdrawals within limit
+    let withdraw1 = 300;
+    let ytoken1 = coin::split(&mut ytoken, withdraw1, test_scenario::ctx(&mut scenario));
+    let coin1 = vault::withdraw(&mut vault, ytoken1, test_scenario::ctx(&mut scenario));
+    
+    let withdraw2 = 400;
+    let ytoken2 = coin::split(&mut ytoken, withdraw2, test_scenario::ctx(&mut scenario));
+    let coin2 = vault::withdraw(&mut vault, ytoken2, test_scenario::ctx(&mut scenario));
+    
+    // Check remaining limit
+    let remaining = vault::get_remaining_daily_limit(&vault, test_scenario::ctx(&mut scenario));
+    assert!(remaining == daily_limit - withdraw1 - withdraw2, 0);
+    
+    // Try to withdraw remaining amount
+    let withdraw3 = remaining;
+    let ytoken3 = coin::split(&mut ytoken, withdraw3, test_scenario::ctx(&mut scenario));
+    let coin3 = vault::withdraw(&mut vault, ytoken3, test_scenario::ctx(&mut scenario));
+    
+    // Verify limit is exhausted
+    let remaining_final = vault::get_remaining_daily_limit(&vault, test_scenario::ctx(&mut scenario));
+    assert!(remaining_final == 0, 1);
+    
+    // Verify security status shows limit exceeded
+    let (_, _, _, daily_limit_exceeded, _, _) = 
+        vault::get_security_status(&vault, test_scenario::ctx(&mut scenario));
+    assert!(daily_limit_exceeded, 2);
+    
+    // Cleanup
+    test_utils::destroy(vault);
+    test_utils::destroy(ytoken);
+    test_utils::destroy(coin1);
+    test_utils::destroy(coin2);
+    test_utils::destroy(coin3);
     test_scenario::return_to_sender(&scenario, admin_cap);
     test_scenario::end(scenario);
 }

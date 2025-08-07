@@ -6,6 +6,7 @@ module olend::test_registry;
 
 use sui::test_scenario;
 use sui::object;
+
 use std::vector;
 use std::option;
 
@@ -516,6 +517,115 @@ fun test_set_default_wrong_vault_id() {
     // Try to set default with wrong vault ID (should fail)
     let wrong_vault_id = object::id_from_address(@0x999);
     liquidity::set_default_vault<TestCoin>(&mut registry, wrong_vault_id, &admin_cap);
+    
+    // Cleanup
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+// ===== Global Emergency Tests =====
+
+/// Test global emergency pause functionality
+#[test]
+fun test_global_emergency_pause_all() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    
+    // Verify initial state
+    assert!(!liquidity::is_global_emergency_state(&registry), 0);
+    
+    // Trigger global emergency pause
+    liquidity::global_emergency_pause_all(&mut registry, &admin_cap);
+    
+    // Verify global emergency state
+    assert!(liquidity::is_global_emergency_state(&registry), 1);
+    
+    // Cleanup
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test restore from global emergency state
+#[test]
+fun test_restore_from_global_emergency() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    
+    // Trigger global emergency pause
+    liquidity::global_emergency_pause_all(&mut registry, &admin_cap);
+    assert!(liquidity::is_global_emergency_state(&registry), 0);
+    
+    // Restore from emergency
+    liquidity::restore_from_global_emergency(&mut registry, &admin_cap);
+    assert!(!liquidity::is_global_emergency_state(&registry), 1);
+    
+    // Cleanup
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test global emergency blocks vault operations
+#[test]
+#[expected_failure(abort_code = 1006, location = olend::liquidity)]
+fun test_global_emergency_blocks_vault_registration() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    
+    // Trigger global emergency pause
+    liquidity::global_emergency_pause_all(&mut registry, &admin_cap);
+    
+    // Try to register a vault (should fail due to version mismatch)
+    let fake_vault_id = object::id_from_address(@0x123);
+    liquidity::register_vault<TestCoin>(&mut registry, fake_vault_id, &admin_cap);
+    
+    // Cleanup
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test unauthorized global emergency pause
+/// Note: This test is conceptual - in practice, AdminCap cannot be created outside the module
+#[test]
+fun test_global_emergency_pause_security() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize Registry
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    
+    // Test that only the correct admin_cap can trigger global emergency
+    let admin_cap_id = liquidity::get_admin_cap_id(&registry);
+    let actual_admin_cap_id = object::id(&admin_cap);
+    assert!(admin_cap_id == actual_admin_cap_id, 0);
+    
+    // This verifies that the admin cap is properly linked to the registry
+    liquidity::global_emergency_pause_all(&mut registry, &admin_cap);
+    assert!(liquidity::is_global_emergency_state(&registry), 1);
     
     // Cleanup
     test_scenario::return_shared(registry);
