@@ -5,12 +5,22 @@ module olend::vault;
 
 use sui::coin::{Self, Coin};
 use sui::balance::{Self, Balance, Supply};
+use sui::object::{Self, UID, ID};
+use sui::tx_context::{Self, TxContext};
+use std::option::{Self, Option};
+use std::type_name::{Self, TypeName};
 
 use olend::constants;
 use olend::errors;
 use olend::utils;
 use olend::liquidity::{Self, LiquidityAdminCap};
 use olend::ytoken::{Self, YToken};
+use olend::oracle::{Self, OracleRegistry, PriceData};
+
+// Oracle integration imports
+use sui::clock::{Self, Clock};
+use pyth::state::{State as PythState};
+use pyth::price_info::PriceInfoObject;
 
 // ===== Struct Definitions =====
 
@@ -1284,4 +1294,383 @@ public fun validate_batch_operations<T>(
     };
     
     true
+}
+
+// ===== Oracle Integration Functions =====
+
+/// Calculate USD value of vault assets using oracle price feeds
+/// Provides real-time valuation of vault holdings
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `oracle_registry` - Reference to the oracle registry
+/// * `price_info_object` - Reference to the Pyth price info object
+/// * `clock` - Reference to the clock for timestamp validation
+/// * `asset_decimals` - Number of decimals for the asset
+/// 
+/// # Returns
+/// * `u64` - USD value of vault assets (in USD with oracle decimals)
+public fun calculate_vault_usd_value<T>(
+    vault: &Vault<T>,
+    oracle_registry: &OracleRegistry,
+    price_info_object: &PriceInfoObject,
+    clock: &Clock,
+    asset_decimals: u8,
+): u64 {
+    // Verify vault version
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    
+    // Check if oracle has price feed for this asset
+    if (!oracle::has_price_feed<T>(oracle_registry)) {
+        return 0 // No price feed available
+    };
+    
+    let total_vault_assets = total_assets(vault);
+    if (total_vault_assets == 0) {
+        return 0
+    };
+    
+    // Get current price from oracle
+    oracle::calculate_usd_value<T>(
+        oracle_registry,
+        price_info_object,
+        clock,
+        total_vault_assets,
+        asset_decimals
+    )
+}
+
+/// Calculate collateral value and health factor for a position
+/// Provides comprehensive risk assessment for lending positions
+/// 
+/// # Type Parameters
+/// * `T` - Collateral asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `oracle_registry` - Reference to the oracle registry
+/// * `price_info_object` - Reference to the Pyth price info object
+/// * `clock` - Reference to the clock
+/// * `collateral_amount` - Amount of collateral
+/// * `debt_usd_value` - Current debt value in USD
+/// * `asset_decimals` - Number of decimals for the asset
+/// 
+/// # Returns
+/// * `(u64, u64, bool)` - (collateral_usd_value, health_factor, is_healthy)
+public fun calculate_position_health<T>(
+    vault: &Vault<T>,
+    oracle_registry: &OracleRegistry,
+    price_info_object: &PriceInfoObject,
+    clock: &Clock,
+    collateral_amount: u64,
+    debt_usd_value: u64,
+    asset_decimals: u8,
+): (u64, u64, bool) {
+    // Verify vault version
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    
+    if (collateral_amount == 0) {
+        return (0, 0, debt_usd_value == 0)
+    };
+    
+    // Check if oracle has price feed for collateral
+    if (!oracle::has_price_feed<T>(oracle_registry)) {
+        // Without price feed, cannot assess health
+        return (0, 0, false)
+    };
+    
+    // Calculate collateral USD value
+    let collateral_usd_value = oracle::calculate_usd_value<T>(
+        oracle_registry,
+        price_info_object,
+        clock,
+        collateral_amount,
+        asset_decimals
+    );
+    
+    if (debt_usd_value == 0) {
+        // No debt, position is healthy
+        return (collateral_usd_value, constants::health_factor_precision() * 10, true) // Health factor = 10.00
+    };
+    
+    // Calculate health factor: (collateral_value * liquidation_threshold) / debt_value
+    // Health factor precision is 100 (2 decimal places)
+    let liquidation_threshold = constants::default_liquidation_threshold_bps();
+    let adjusted_collateral = (collateral_usd_value * liquidation_threshold) / constants::basis_points_denominator();
+    let health_factor = (adjusted_collateral * constants::health_factor_precision()) / debt_usd_value;
+    
+    let is_healthy = health_factor >= constants::min_health_factor();
+    
+    (collateral_usd_value, health_factor, is_healthy)
+}
+
+/// Check if a position is eligible for liquidation
+/// Determines whether a position can be liquidated based on health factor
+/// 
+/// # Type Parameters
+/// * `T` - Collateral asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `oracle_registry` - Reference to the oracle registry
+/// * `price_info_object` - Reference to the Pyth price info object
+/// * `clock` - Reference to the clock
+/// * `collateral_amount` - Amount of collateral
+/// * `debt_usd_value` - Current debt value in USD
+/// * `asset_decimals` - Number of decimals for the asset
+/// 
+/// # Returns
+/// * `(bool, u64, u64)` - (is_liquidatable, health_factor, max_liquidation_amount)
+public fun check_liquidation_eligibility<T>(
+    vault: &Vault<T>,
+    oracle_registry: &OracleRegistry,
+    price_info_object: &PriceInfoObject,
+    clock: &Clock,
+    collateral_amount: u64,
+    debt_usd_value: u64,
+    asset_decimals: u8,
+): (bool, u64, u64) {
+    let (collateral_usd_value, health_factor, is_healthy) = calculate_position_health<T>(
+        vault,
+        oracle_registry,
+        price_info_object,
+        clock,
+        collateral_amount,
+        debt_usd_value,
+        asset_decimals
+    );
+    
+    if (is_healthy) {
+        return (false, health_factor, 0)
+    };
+    
+    // Calculate maximum liquidation amount (typically 50% of debt or collateral value)
+    let max_liquidation_usd = if (collateral_usd_value < debt_usd_value) {
+        collateral_usd_value / 2
+    } else {
+        debt_usd_value / 2
+    };
+    
+    (true, health_factor, max_liquidation_usd)
+}
+
+/// Calculate borrowing capacity for a collateral position
+/// Determines how much can be safely borrowed against collateral
+/// 
+/// # Type Parameters
+/// * `T` - Collateral asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `oracle_registry` - Reference to the oracle registry
+/// * `price_info_object` - Reference to the Pyth price info object
+/// * `clock` - Reference to the clock
+/// * `collateral_amount` - Amount of collateral
+/// * `existing_debt_usd` - Existing debt value in USD
+/// * `asset_decimals` - Number of decimals for the asset
+/// 
+/// # Returns
+/// * `(u64, u64, u64)` - (max_borrow_usd, available_borrow_usd, collateral_usd_value)
+public fun calculate_borrowing_capacity<T>(
+    vault: &Vault<T>,
+    oracle_registry: &OracleRegistry,
+    price_info_object: &PriceInfoObject,
+    clock: &Clock,
+    collateral_amount: u64,
+    existing_debt_usd: u64,
+    asset_decimals: u8,
+): (u64, u64, u64) {
+    // Verify vault version
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    
+    if (collateral_amount == 0) {
+        return (0, 0, 0)
+    };
+    
+    // Check if oracle has price feed
+    if (!oracle::has_price_feed<T>(oracle_registry)) {
+        return (0, 0, 0)
+    };
+    
+    // Calculate collateral USD value
+    let collateral_usd_value = oracle::calculate_usd_value<T>(
+        oracle_registry,
+        price_info_object,
+        clock,
+        collateral_amount,
+        asset_decimals
+    );
+    
+    if (collateral_usd_value == 0) {
+        return (0, 0, 0)
+    };
+    
+    // Calculate maximum borrowing capacity
+    // Max borrow = collateral_value * liquidation_threshold / min_health_factor
+    let liquidation_threshold = constants::default_liquidation_threshold_bps();
+    let min_health_factor = constants::min_health_factor();
+    
+    let adjusted_collateral = (collateral_usd_value * liquidation_threshold) / constants::basis_points_denominator();
+    let max_borrow_usd = (adjusted_collateral * constants::health_factor_precision()) / min_health_factor;
+    
+    // Calculate available borrowing capacity
+    let available_borrow_usd = if (max_borrow_usd > existing_debt_usd) {
+        max_borrow_usd - existing_debt_usd
+    } else {
+        0
+    };
+    
+    (max_borrow_usd, available_borrow_usd, collateral_usd_value)
+}
+
+/// Validate oracle-based operation safety
+/// Checks if oracle prices are fresh and reliable for operations
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `oracle_registry` - Reference to the oracle registry
+/// * `price_info_object` - Reference to the Pyth price info object
+/// * `clock` - Reference to the clock
+/// 
+/// # Returns
+/// * `(bool, PriceData)` - (is_safe, price_data)
+public fun validate_oracle_safety<T>(
+    oracle_registry: &OracleRegistry,
+    price_info_object: &PriceInfoObject,
+    clock: &Clock,
+): (bool, PriceData) {
+    // Check if oracle registry is paused
+    if (oracle::is_oracle_paused(oracle_registry)) {
+        let invalid_price_data = oracle::create_invalid_price_data<T>();
+        return (false, invalid_price_data)
+    };
+    
+    // Check if price feed exists
+    if (!oracle::has_price_feed<T>(oracle_registry)) {
+        let invalid_price_data = oracle::create_invalid_price_data<T>();
+        return (false, invalid_price_data)
+    };
+    
+    // Get price data with validation
+    let price_data = oracle::get_price<T>(oracle_registry, price_info_object, clock);
+    
+    // Validate price data
+    let is_valid = oracle::validate_price_data(&price_data);
+    
+    (is_valid, price_data)
+}
+
+/// Oracle-based deposit validation
+/// Checks if deposit amount is reasonable based on current market prices
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `oracle_registry` - Reference to the oracle registry
+/// * `price_info_object` - Reference to the Pyth price info object
+/// * `clock` - Reference to the clock
+/// * `deposit_amount` - Amount to deposit
+/// * `asset_decimals` - Number of decimals for the asset
+/// * `max_usd_deposit` - Maximum allowed deposit in USD
+/// 
+/// # Returns
+/// * `bool` - True if deposit is within acceptable limits
+public fun validate_oracle_based_deposit<T>(
+    vault: &Vault<T>,
+    oracle_registry: &OracleRegistry,
+    price_info_object: &PriceInfoObject,
+    clock: &Clock,
+    deposit_amount: u64,
+    asset_decimals: u8,
+    max_usd_deposit: u64,
+): bool {
+    // Verify vault version
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    
+    // Check oracle safety first
+    let (is_oracle_safe, _) = validate_oracle_safety<T>(oracle_registry, price_info_object, clock);
+    if (!is_oracle_safe) {
+        return false
+    };
+    
+    // Calculate USD value of deposit
+    let deposit_usd_value = oracle::calculate_usd_value<T>(
+        oracle_registry,
+        price_info_object,
+        clock,
+        deposit_amount,
+        asset_decimals
+    );
+    
+    // Check if deposit is within limits
+    deposit_usd_value <= max_usd_deposit && deposit_usd_value > 0
+}
+
+/// Oracle-based withdrawal validation
+/// Ensures withdrawal won't negatively impact vault health or create risks
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `oracle_registry` - Reference to the oracle registry
+/// * `price_info_object` - Reference to the Pyth price info object
+/// * `clock` - Reference to the clock
+/// * `withdrawal_amount` - Amount to withdraw
+/// * `asset_decimals` - Number of decimals for the asset
+/// * `min_vault_usd_value` - Minimum required vault value in USD
+/// 
+/// # Returns
+/// * `bool` - True if withdrawal is safe
+public fun validate_oracle_based_withdrawal<T>(
+    vault: &Vault<T>,
+    oracle_registry: &OracleRegistry,
+    price_info_object: &PriceInfoObject,
+    clock: &Clock,
+    withdrawal_amount: u64,
+    asset_decimals: u8,
+    min_vault_usd_value: u64,
+): bool {
+    // Verify vault version
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    
+    // Check oracle safety
+    let (is_oracle_safe, _) = validate_oracle_safety<T>(oracle_registry, price_info_object, clock);
+    if (!is_oracle_safe) {
+        return false
+    };
+    
+    // Calculate current vault USD value
+    let current_vault_usd = calculate_vault_usd_value<T>(
+        vault,
+        oracle_registry,
+        price_info_object,
+        clock,
+        asset_decimals
+    );
+    
+    // Calculate USD value of withdrawal
+    let withdrawal_usd_value = oracle::calculate_usd_value<T>(
+        oracle_registry,
+        price_info_object,
+        clock,
+        withdrawal_amount,
+        asset_decimals
+    );
+    
+    // Check if vault will maintain minimum value after withdrawal
+    if (current_vault_usd > withdrawal_usd_value) {
+        let vault_value_after = current_vault_usd - withdrawal_usd_value;
+        vault_value_after >= min_vault_usd_value
+    } else {
+        false // Withdrawal would drain vault below minimum
+    }
 }
