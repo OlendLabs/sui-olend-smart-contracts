@@ -43,6 +43,15 @@ const EZeroAssets: u64 = 1012;
 /// Vault already exists for this asset type
 const EVaultAlreadyExists: u64 = 1013;
 
+/// Data consistency check failed
+const EDataInconsistency: u64 = 1014;
+
+/// Concurrent access violation
+const EConcurrentAccessViolation: u64 = 1015;
+
+/// Atomic operation failed
+const EAtomicOperationFailed: u64 = 1016;
+
 // ===== Account Module Error Codes (2000-2999) =====
 
 /// Account not found
@@ -79,6 +88,18 @@ const EPositionIdNotFound: u64 = 2011;
 /// Invalid allowance type
 const EInvalidAllowanceType: u64 = 2012;
 
+/// Rate limit exceeded
+const ERateLimitExceeded: u64 = 2013;
+
+/// Replay attack detected
+const EReplayAttackDetected: u64 = 2014;
+
+/// Suspicious activity detected
+const ESuspiciousActivityDetected: u64 = 2015;
+
+/// Account temporarily restricted
+const EAccountRestricted: u64 = 2016;
+
 // ===== General Error Codes (9000-9999) =====
 
 /// Invalid input parameter
@@ -110,6 +131,9 @@ public fun invalid_vault_config(): u64 { EInvalidVaultConfig }
 public fun zero_shares(): u64 { EZeroShares }
 public fun zero_assets(): u64 { EZeroAssets }
 public fun vault_already_exists(): u64 { EVaultAlreadyExists }
+public fun data_inconsistency(): u64 { EDataInconsistency }
+public fun concurrent_access_violation(): u64 { EConcurrentAccessViolation }
+public fun atomic_operation_failed(): u64 { EAtomicOperationFailed }
 
 /// Get Account-related error codes
 public fun account_not_found(): u64 { EAccountNotFound }
@@ -124,6 +148,10 @@ public fun invalid_account_status(): u64 { EInvalidAccountStatus }
 // Sub-account functionality removed
 public fun position_id_not_found(): u64 { EPositionIdNotFound }
 public fun invalid_allowance_type(): u64 { EInvalidAllowanceType }
+public fun rate_limit_exceeded(): u64 { ERateLimitExceeded }
+public fun replay_attack_detected(): u64 { EReplayAttackDetected }
+public fun suspicious_activity_detected(): u64 { ESuspiciousActivityDetected }
+public fun account_restricted(): u64 { EAccountRestricted }
 
 /// Get general error codes
 public fun invalid_input(): u64 { EInvalidInput }

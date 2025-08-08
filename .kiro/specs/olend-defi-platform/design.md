@@ -28,9 +28,7 @@ graph TB
     subgraph "Account Module"
         AccountRegistry[AccountRegistry<br/>Share Object]
         Account[Account<br/>Share Object]
-        SubAccount[SubAccount<br/>Share Object]
         AccountCap[AccountCap<br/>Owned Object]
-        SubAccountCap[SubAccountCap<br/>Owned Object]
     end
     
     subgraph "External Modules"
@@ -46,9 +44,7 @@ graph TB
     Vault2 --> YToken2
     
     AccountRegistry --> Account
-    Account --> SubAccount
     Account --> AccountCap
-    SubAccount --> SubAccountCap
     
     Lending --> Registry
     Lending --> AccountRegistry
@@ -254,8 +250,6 @@ public struct Account has key {
     points: u64,
     /// 头寸ID列表（不存储详情）
     position_ids: vector<ID>,
-    /// 子账户列表
-    sub_accounts: vector<ID>,
     /// 账户状态
     status: AccountStatus,
 }
@@ -308,78 +302,53 @@ public fun get_level(account: &Account): u8
 public fun get_points(account: &Account): u64
 ```
 
-#### 2.3 SubAccount 结构设计
+#### 2.3 跨模块集成接口设计
 
 ```move
-/// 子账户
-public struct SubAccount has key {
-    id: UID,
-    /// 父账户ID
-    parent_account_id: ID,
-    /// 子账户名称/标识
-    name: String,
-    /// 头寸ID列表
-    position_ids: vector<ID>,
-    /// 授权额度
-    allowances: Table<TypeName, Allowance>,
-    /// 子账户状态
-    status: AccountStatus,
-}
-
-/// 额度授权结构
-public struct Allowance has store {
-    /// 总授权额度
-    total_limit: u64,
-    /// 已使用额度
-    used_amount: u64,
-    /// 额度类型（借贷、交易等）
-    allowance_type: u8,
-    /// 过期时间（可选）
-    expires_at: Option<u64>,
-}
-
-/// 子账户权限凭证
-public struct SubAccountCap has key {
-    id: UID,
-    /// 对应的子账户ID
-    sub_account_id: ID,
-    /// 父账户ID
-    parent_account_id: ID,
-}
-```
-
-**核心接口：**
-```move
-// 创建子账户
-public fun create_sub_account(
-    account: &mut Account,
-    cap: &AccountCap,
-    name: String,
-    ctx: &mut TxContext
-): (SubAccount, SubAccountCap)
-
-// 设置子账户额度
-public fun set_allowance<T>(
+/// 跨模块身份验证接口
+public fun verify_user_identity(
+    registry: &AccountRegistry,
     account: &Account,
-    sub_account: &mut SubAccount,
-    cap: &AccountCap,
-    limit: u64,
-    allowance_type: u8
-)
-
-// 检查和扣减额度
-public fun check_and_consume_allowance<T>(
-    sub_account: &mut SubAccount,
-    cap: &SubAccountCap,
-    amount: u64,
-    allowance_type: u8
+    cap: &AccountCap
 ): bool
 
-// 查询剩余额度
-public fun get_remaining_allowance<T>(
-    sub_account: &SubAccount,
-    allowance_type: u8
-): u64
+/// 跨模块等级查询接口
+public fun get_user_level_for_module(
+    account: &Account,
+    cap: &AccountCap
+): u8
+
+/// 跨模块活动更新接口
+public fun update_user_activity_for_module(
+    account: &mut Account,
+    cap: &AccountCap,
+    ctx: &TxContext
+)
+
+/// 跨模块积分奖励接口
+public fun add_user_points_for_module(
+    account: &mut Account,
+    cap: &AccountCap,
+    points: u64
+)
+```
+
+#### 2.4 升级功能设计
+
+```move
+/// AccountRegistry 升级接口
+public fun upgrade_registry(
+    registry: &mut AccountRegistry,
+    upgrade_cap: &UpgradeCap,
+    new_version: u64
+)
+
+/// Account 升级接口
+public fun upgrade_account(
+    account: &mut Account,
+    upgrade_cap: &UpgradeCap,
+    new_version: u64
+)
 ```
 
 ## 数据模型
@@ -415,22 +384,23 @@ sequenceDiagram
     participant User
     participant AccountRegistry
     participant Account
-    participant SubAccount
+    participant LendingModule
     
     User->>AccountRegistry: create_account()
     AccountRegistry->>Account: 创建 Account 对象
     AccountRegistry->>AccountCap: 创建 AccountCap
     AccountRegistry-->>User: 返回 (Account, AccountCap)
     
-    User->>Account: create_sub_account(name)
-    Account->>SubAccount: 创建 SubAccount 对象
-    Account->>SubAccountCap: 创建 SubAccountCap
-    Account-->>User: 返回 (SubAccount, SubAccountCap)
+    LendingModule->>Account: verify_user_identity(registry, account, cap)
+    Account-->>LendingModule: 返回验证结果
     
-    User->>Account: set_allowance(sub_account, limit)
-    Account->>SubAccount: 设置额度限制
+    LendingModule->>Account: get_user_level_for_module(account, cap)
+    Account-->>LendingModule: 返回用户等级
     
-    Note over User,SubAccount: 子账户可以在额度范围内操作
+    LendingModule->>Account: update_user_activity_for_module(account, cap, ctx)
+    LendingModule->>Account: add_user_points_for_module(account, cap, points)
+    
+    Note over User,LendingModule: 跨模块安全集成
 ```
 
 ## 错误处理
@@ -457,7 +427,7 @@ const E_ACCOUNT_NOT_FOUND: u64 = 2001;
 const E_ACCOUNT_SUSPENDED: u64 = 2002;
 const E_INSUFFICIENT_ALLOWANCE: u64 = 2003;
 const E_UNAUTHORIZED_OPERATION: u64 = 2004;
-const E_INVALID_SUB_ACCOUNT: u64 = 2005;
+// 子账户相关错误码已移除
 const E_ALLOWANCE_EXPIRED: u64 = 2006;
 const E_ACCOUNT_CAP_MISMATCH: u64 = 2007;
 ```
@@ -494,10 +464,14 @@ const E_ACCOUNT_CAP_MISMATCH: u64 = 2007;
   - 头寸ID管理
   - 等级积分更新
 
-- **子账户测试**
-  - 子账户创建
-  - 额度设置和检查
-  - 权限层级验证
+- **跨模块集成测试**
+  - 身份验证接口测试
+  - 等级查询接口测试
+  - 活动更新和积分奖励测试
+  
+- **升级功能测试**
+  - 版本控制和升级测试
+  - 升级权限验证测试
 
 ### 2. 集成测试场景
 
@@ -526,7 +500,7 @@ const E_ACCOUNT_CAP_MISMATCH: u64 = 2007;
 
 ### 1. 权限控制
 
-- **分层权限**：主账户 > 子账户的权限层级
+- **统一权限**：用户通过AccountCap完全控制自己的账户
 - **最小权限原则**：每个组件只获得必要的权限
 - **权限验证**：所有敏感操作都需要权限验证
 
@@ -540,7 +514,7 @@ const E_ACCOUNT_CAP_MISMATCH: u64 = 2007;
 
 - **汇率操纵防护**：防止通过大额操作操纵份额汇率
 - **闪电贷防护**：防止闪电贷攻击
-- **额度控制**：通过每日限额和子账户额度控制风险
+- **风险控制**：通过每日限额和跨模块权限验证控制风险
 
 ### 4. 运营安全
 

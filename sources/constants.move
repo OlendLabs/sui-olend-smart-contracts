@@ -19,6 +19,20 @@ const MAX_USER_LEVEL: u8 = 10;
 /// Seconds per day
 const SECONDS_PER_DAY: u64 = 86400;
 
+// ===== Security Constants =====
+
+/// Maximum operations per time window (rate limiting)
+const MAX_OPERATIONS_PER_WINDOW: u64 = 100;
+
+/// Time window duration in milliseconds (5 minutes)
+const RATE_LIMIT_WINDOW_MS: u64 = 300000;
+
+/// Maximum suspicious activities before account restriction
+const MAX_SUSPICIOUS_ACTIVITIES: u64 = 10;
+
+/// Cooldown period after suspicious activity (1 hour in milliseconds)
+const SUSPICIOUS_ACTIVITY_COOLDOWN_MS: u64 = 3600000;
+
 // ===== Allowance Type Constants =====
 
 /// Lending allowance type
@@ -61,3 +75,15 @@ public fun allowance_type_trading(): u8 { ALLOWANCE_TYPE_TRADING }
 
 /// Get withdrawal allowance type
 public fun allowance_type_withdrawal(): u8 { ALLOWANCE_TYPE_WITHDRAWAL }
+
+/// Get maximum operations per window
+public fun max_operations_per_window(): u64 { MAX_OPERATIONS_PER_WINDOW }
+
+/// Get rate limit window duration
+public fun rate_limit_window_ms(): u64 { RATE_LIMIT_WINDOW_MS }
+
+/// Get maximum suspicious activities
+public fun max_suspicious_activities(): u64 { MAX_SUSPICIOUS_ACTIVITIES }
+
+/// Get suspicious activity cooldown period
+public fun suspicious_activity_cooldown_ms(): u64 { SUSPICIOUS_ACTIVITY_COOLDOWN_MS }

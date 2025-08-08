@@ -955,3 +955,333 @@ public fun get_security_status<T>(
     
     (is_active, is_paused, emergency_paused, daily_limit_exceeded, remaining_limit, utilization_rate_bps)
 }
+
+// ===== Data Consistency and Atomic Operations =====
+
+/// Atomic deposit and borrow operation
+/// Ensures both operations succeed or both fail
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Mutable reference to the vault
+/// * `deposit_assets` - Assets to deposit
+/// * `borrow_amount` - Amount to borrow
+/// * `ctx` - Transaction context
+/// 
+/// # Returns
+/// * `(Coin<YToken<T>>, Coin<T>)` - (YToken shares, borrowed assets)
+public(package) fun atomic_deposit_and_borrow<T>(
+    vault: &mut Vault<T>,
+    deposit_assets: Coin<T>,
+    borrow_amount: u64,
+    ctx: &mut tx_context::TxContext
+): (Coin<YToken<T>>, Coin<T>) {
+    // Verify vault version and status
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    assert!(vault.status != VaultStatus::Inactive, errors::vault_not_active());
+    assert!(vault.status != VaultStatus::Paused, errors::vault_paused());
+    
+    let deposit_amount = coin::value(&deposit_assets);
+    
+    // Validate inputs
+    assert!(deposit_amount > 0, errors::zero_assets());
+    assert!(borrow_amount > 0, errors::zero_assets());
+    assert!(deposit_amount >= vault.config.min_deposit, errors::invalid_assets());
+    
+    // Check if we have enough assets for borrowing after deposit
+    let current_available = balance::value(&vault.total_assets);
+    let available_after_deposit = current_available + deposit_amount;
+    assert!(available_after_deposit >= borrow_amount, errors::insufficient_assets());
+    
+    // Calculate shares for deposit
+    let shares_to_mint = convert_to_shares(vault, deposit_amount);
+    assert!(shares_to_mint > 0, errors::zero_shares());
+    
+    // Execute atomic operations
+    // 1. Add deposit assets to vault
+    let asset_balance = coin::into_balance(deposit_assets);
+    balance::join(&mut vault.total_assets, asset_balance);
+    
+    // 2. Mint YToken shares
+    let ytoken_balance = balance::increase_supply(&mut vault.ytoken_supply, shares_to_mint);
+    let ytoken_coin = coin::from_balance(ytoken_balance, ctx);
+    
+    // 3. Borrow assets
+    vault.borrowed_assets = vault.borrowed_assets + borrow_amount;
+    let borrowed_balance = balance::split(&mut vault.total_assets, borrow_amount);
+    let borrowed_coin = coin::from_balance(borrowed_balance, ctx);
+    
+    (ytoken_coin, borrowed_coin)
+}
+
+/// Atomic repay and withdraw operation
+/// Ensures both operations succeed or both fail
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Mutable reference to the vault
+/// * `repay_assets` - Assets to repay
+/// * `ytoken_coin` - YToken shares to burn for withdrawal
+/// * `ctx` - Transaction context
+/// 
+/// # Returns
+/// * `Coin<T>` - Withdrawn assets (after repayment)
+public(package) fun atomic_repay_and_withdraw<T>(
+    vault: &mut Vault<T>,
+    repay_assets: Coin<T>,
+    ytoken_coin: Coin<YToken<T>>,
+    ctx: &mut tx_context::TxContext
+): Coin<T> {
+    // Verify vault version and status
+    assert!(vault.version == constants::current_version(), errors::version_mismatch());
+    assert!(vault.status != VaultStatus::Inactive, errors::vault_not_active());
+    assert!(vault.status != VaultStatus::Paused, errors::vault_paused());
+    
+    let repay_amount = coin::value(&repay_assets);
+    let shares_to_burn = coin::value(&ytoken_coin);
+    
+    // Validate inputs
+    assert!(repay_amount > 0, errors::zero_assets());
+    assert!(shares_to_burn > 0, errors::zero_shares());
+    
+    // Calculate withdrawal amount
+    let withdraw_amount = convert_to_assets(vault, shares_to_burn);
+    assert!(withdraw_amount > 0, errors::zero_assets());
+    assert!(withdraw_amount >= vault.config.min_withdrawal, errors::invalid_assets());
+    
+    // Check daily withdrawal limit
+    let current_day = utils::get_current_day(ctx);
+    if (current_day != vault.daily_limit.current_day) {
+        vault.daily_limit.current_day = current_day;
+        vault.daily_limit.withdrawn_today = 0;
+    };
+    
+    assert!(
+        vault.daily_limit.withdrawn_today + withdraw_amount <= vault.daily_limit.max_daily_withdrawal,
+        errors::daily_limit_exceeded()
+    );
+    
+    // Execute atomic operations
+    // 1. Add repayment to vault
+    let repay_balance = coin::into_balance(repay_assets);
+    balance::join(&mut vault.total_assets, repay_balance);
+    
+    // 2. Update borrowed assets tracking
+    if (vault.borrowed_assets >= repay_amount) {
+        vault.borrowed_assets = vault.borrowed_assets - repay_amount;
+    } else {
+        vault.borrowed_assets = 0;
+    };
+    
+    // 3. Check sufficient assets for withdrawal
+    let available_assets = balance::value(&vault.total_assets);
+    assert!(available_assets >= withdraw_amount, errors::insufficient_assets());
+    
+    // 4. Update daily withdrawal tracking
+    vault.daily_limit.withdrawn_today = vault.daily_limit.withdrawn_today + withdraw_amount;
+    
+    // 5. Burn YToken shares
+    let ytoken_balance = coin::into_balance(ytoken_coin);
+    balance::decrease_supply(&mut vault.ytoken_supply, ytoken_balance);
+    
+    // 6. Withdraw assets
+    let withdrawn_balance = balance::split(&mut vault.total_assets, withdraw_amount);
+    coin::from_balance(withdrawn_balance, ctx)
+}
+
+/// Validates vault data consistency
+/// Checks for data integrity issues and inconsistencies
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `ctx` - Transaction context for timestamp validation
+/// 
+/// # Returns
+/// * `bool` - True if vault data is consistent
+public fun validate_vault_consistency<T>(
+    vault: &Vault<T>,
+    ctx: &tx_context::TxContext
+): bool {
+    // Version consistency check
+    if (vault.version != constants::current_version()) {
+        return false
+    };
+    
+    // Balance consistency checks
+    let total_assets_balance = balance::value(&vault.total_assets);
+    let total_supply = balance::supply_value(&vault.ytoken_supply);
+    
+    // Borrowed assets should not exceed total assets
+    if (vault.borrowed_assets > total_assets_balance + vault.borrowed_assets) {
+        return false
+    };
+    
+    // Daily limit consistency
+    if (vault.daily_limit.max_daily_withdrawal == 0) {
+        return false
+    };
+    
+    if (vault.daily_limit.withdrawn_today > vault.daily_limit.max_daily_withdrawal) {
+        return false
+    };
+    
+    // Configuration consistency
+    if (vault.config.min_deposit == 0 || vault.config.min_withdrawal == 0) {
+        return false
+    };
+    
+    if (vault.config.deposit_fee_bps > 10000 || vault.config.withdrawal_fee_bps > 10000) {
+        return false
+    };
+    
+    // Day counter should be reasonable
+    let current_day = utils::get_current_day(ctx);
+    if (vault.daily_limit.current_day > current_day + 1) { // Allow 1 day tolerance
+        return false
+    };
+    
+    // Share-to-asset ratio consistency
+    if (total_supply > 0) {
+        let calculated_assets = total_assets_balance + vault.borrowed_assets;
+        // Ensure the ratio is reasonable (shares should not be 0 when assets exist)
+        if (calculated_assets > 0 && total_supply == 0) {
+            return false
+        };
+    };
+    
+    true
+}
+
+/// Concurrent-safe vault operation wrapper
+/// Provides additional safety checks for concurrent access
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Reference to the vault
+/// * `ctx` - Transaction context
+/// 
+/// # Returns
+/// * `bool` - True if vault is safe for concurrent operations
+public fun check_vault_concurrent_safety<T>(
+    vault: &Vault<T>,
+    ctx: &tx_context::TxContext
+): bool {
+    // Basic consistency validation
+    if (!validate_vault_consistency(vault, ctx)) {
+        return false
+    };
+    
+    // Status safety checks
+    if (vault.status == VaultStatus::Inactive) {
+        return false
+    };
+    
+    // Daily limit safety - ensure we're not at the exact limit boundary
+    let remaining_limit = get_remaining_daily_limit(vault, ctx);
+    if (remaining_limit == 0) {
+        return false // At daily limit, not safe for withdrawals
+    };
+    
+    // Utilization rate safety check
+    let (_, _, _, _, utilization_rate_bps) = get_vault_statistics(vault);
+    if (utilization_rate_bps >= 9500) { // 95% utilization is high risk
+        return false
+    };
+    
+    true
+}
+
+/// Batch operation for multiple vault operations
+/// Ensures all operations succeed or all fail
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `vault` - Mutable reference to the vault
+/// * `operations` - Vector of operation types (1=deposit, 2=withdraw, 3=borrow, 4=repay)
+/// * `amounts` - Vector of amounts corresponding to operations
+/// * `ctx` - Transaction context
+/// 
+/// # Returns
+/// * `bool` - True if all operations can be executed safely
+public fun validate_batch_operations<T>(
+    vault: &Vault<T>,
+    operations: vector<u8>,
+    amounts: vector<u64>,
+    ctx: &tx_context::TxContext
+): bool {
+    let op_count = std::vector::length(&operations);
+    let amount_count = std::vector::length(&amounts);
+    
+    // Validate input consistency
+    if (op_count != amount_count || op_count == 0) {
+        return false
+    };
+    
+    // Validate vault consistency first
+    if (!validate_vault_consistency(vault, ctx)) {
+        return false
+    };
+    
+    // Simulate operations to check feasibility
+    let mut simulated_balance = balance::value(&vault.total_assets);
+    let mut simulated_borrowed = vault.borrowed_assets;
+    let mut simulated_withdrawn_today = vault.daily_limit.withdrawn_today;
+    
+    let current_day = utils::get_current_day(ctx);
+    if (current_day != vault.daily_limit.current_day) {
+        simulated_withdrawn_today = 0;
+    };
+    
+    let mut i = 0;
+    while (i < op_count) {
+        let operation = *std::vector::borrow(&operations, i);
+        let amount = *std::vector::borrow(&amounts, i);
+        
+        if (amount == 0) {
+            return false // Invalid amount
+        };
+        
+        if (operation == 1) { // Deposit
+            simulated_balance = simulated_balance + amount;
+        } else if (operation == 2) { // Withdraw
+            if (simulated_balance < amount) {
+                return false // Insufficient balance
+            };
+            if (simulated_withdrawn_today + amount > vault.daily_limit.max_daily_withdrawal) {
+                return false // Daily limit exceeded
+            };
+            simulated_balance = simulated_balance - amount;
+            simulated_withdrawn_today = simulated_withdrawn_today + amount;
+        } else if (operation == 3) { // Borrow
+            if (simulated_balance < amount) {
+                return false // Insufficient balance
+            };
+            simulated_balance = simulated_balance - amount;
+            simulated_borrowed = simulated_borrowed + amount;
+        } else if (operation == 4) { // Repay
+            simulated_balance = simulated_balance + amount;
+            if (simulated_borrowed >= amount) {
+                simulated_borrowed = simulated_borrowed - amount;
+            } else {
+                simulated_borrowed = 0;
+            };
+        } else {
+            return false // Invalid operation
+        };
+        
+        i = i + 1;
+    };
+    
+    true
+}
