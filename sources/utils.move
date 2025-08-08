@@ -3,6 +3,7 @@
 module olend::utils;
 
 use olend::constants;
+use sui::tx_context::TxContext;
 
 // ===== Helper Structures =====
 
@@ -62,4 +63,20 @@ public fun is_valid_allowance_type(allowance_type: u8): bool {
 public fun get_current_day(ctx: &TxContext): u64 {
     let timestamp = current_timestamp(ctx);
     timestamp.seconds / constants::seconds_per_day()
+}
+
+/// Calculate power of 10 (10^n)
+public fun pow(base: u64, exp: u8): u64 {
+    let mut result = 1;
+    let mut i = 0;
+    while (i < exp) {
+        result = result * base;
+        i = i + 1;
+    };
+    result
+}
+
+/// Verify version compatibility - throws error if incompatible
+public fun verify_version(current: u64) {
+    assert!(current == constants::current_version(), 1006); // EVersionMismatch
 }

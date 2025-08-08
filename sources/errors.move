@@ -100,6 +100,53 @@ const ESuspiciousActivityDetected: u64 = 2015;
 /// Account temporarily restricted
 const EAccountRestricted: u64 = 2016;
 
+// ===== Oracle Module Error Codes (3000-3999) =====
+
+/// Oracle is paused
+const EOraclePaused: u64 = 3001;
+
+/// Price feed not found
+const EPriceFeedNotFound: u64 = 3002;
+
+/// Price data is stale
+const EPriceStale: u64 = 3003;
+
+/// Price confidence too low
+const EPriceConfidenceTooLow: u64 = 3004;
+
+/// Invalid price identifier
+const EInvalidPriceId: u64 = 3005;
+
+/// Price feed already exists
+const EPriceFeedAlreadyExists: u64 = 3006;
+
+/// Maximum price feeds exceeded
+const EMaxPriceFeedsExceeded: u64 = 3007;
+
+/// Invalid oracle configuration
+const EInvalidOracleConfig: u64 = 3008;
+
+/// Price data validation failed
+const EPriceValidationFailed: u64 = 3009;
+
+/// Pyth state mismatch
+const EPythStateMismatch: u64 = 3010;
+
+/// Insufficient collateral
+const EInsufficientCollateral: u64 = 3011;
+
+/// Liquidation threshold exceeded
+const ELiquidationThresholdExceeded: u64 = 3012;
+
+/// Health factor too low
+const EHealthFactorTooLow: u64 = 3013;
+
+/// Price impact too high
+const EPriceImpactTooHigh: u64 = 3014;
+
+/// Oracle dependency not available
+const EOracleDependencyNotAvailable: u64 = 3015;
+
 // ===== General Error Codes (9000-9999) =====
 
 /// Invalid input parameter
@@ -152,6 +199,23 @@ public fun rate_limit_exceeded(): u64 { ERateLimitExceeded }
 public fun replay_attack_detected(): u64 { EReplayAttackDetected }
 public fun suspicious_activity_detected(): u64 { ESuspiciousActivityDetected }
 public fun account_restricted(): u64 { EAccountRestricted }
+
+/// Get Oracle-related error codes
+public fun oracle_paused(): u64 { EOraclePaused }
+public fun price_feed_not_found(): u64 { EPriceFeedNotFound }
+public fun price_stale(): u64 { EPriceStale }
+public fun price_confidence_too_low(): u64 { EPriceConfidenceTooLow }
+public fun invalid_price_id(): u64 { EInvalidPriceId }
+public fun price_feed_already_exists(): u64 { EPriceFeedAlreadyExists }
+public fun max_price_feeds_exceeded(): u64 { EMaxPriceFeedsExceeded }
+public fun invalid_oracle_config(): u64 { EInvalidOracleConfig }
+public fun price_validation_failed(): u64 { EPriceValidationFailed }
+public fun pyth_state_mismatch(): u64 { EPythStateMismatch }
+public fun insufficient_collateral(): u64 { EInsufficientCollateral }
+public fun liquidation_threshold_exceeded(): u64 { ELiquidationThresholdExceeded }
+public fun health_factor_too_low(): u64 { EHealthFactorTooLow }
+public fun price_impact_too_high(): u64 { EPriceImpactTooHigh }
+public fun oracle_dependency_not_available(): u64 { EOracleDependencyNotAvailable }
 
 /// Get general error codes
 public fun invalid_input(): u64 { EInvalidInput }

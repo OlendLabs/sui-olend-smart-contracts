@@ -3,10 +3,16 @@
 module olend::liquidity;
 
 use sui::table::{Self, Table};
+use sui::object::{Self, ID, UID};
+use sui::transfer;
+use sui::tx_context::{Self, TxContext};
 use std::type_name::{Self, TypeName};
+use std::option;
+use std::vector;
 
 use olend::constants;
 use olend::errors;
+use olend::oracle::{Self, OracleRegistry};
 
 // ===== Struct Definitions =====
 
@@ -20,6 +26,8 @@ public struct Registry has key {
     asset_vaults: Table<TypeName, VaultInfo>,
     /// Admin capability ID for permission control
     admin_cap_id: ID,
+    /// Oracle registry ID for price feeds
+    oracle_registry_id: option::Option<ID>,
 }
 
 /// Vault information for a single asset type
@@ -60,6 +68,7 @@ fun create_registry(ctx: &mut TxContext): (Registry, LiquidityAdminCap) {
         version: constants::current_version(),
         asset_vaults: table::new(ctx),
         admin_cap_id,
+        oracle_registry_id: option::none<ID>(),
     };
     
     (registry, admin_cap)
@@ -85,6 +94,91 @@ fun init(ctx: &mut TxContext) {
 /// * `ctx` - Transaction context
 public fun init_for_testing(ctx: &mut TxContext) {
     init(ctx)
+}
+
+// ===== Oracle Integration Functions =====
+
+/// Set oracle registry for price feed integration
+/// Links the liquidity registry to an oracle registry for price feeds
+/// 
+/// # Arguments
+/// * `registry` - Mutable reference to the liquidity registry
+/// * `oracle_registry` - Reference to the oracle registry
+/// * `admin_cap` - Admin capability for authorization
+public fun set_oracle_registry(
+    registry: &mut Registry,
+    oracle_registry: &OracleRegistry,
+    admin_cap: &LiquidityAdminCap,
+) {
+    // Verify admin permission
+    assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
+    
+    // Verify version
+    assert!(registry.version == constants::current_version(), errors::version_mismatch());
+    
+    registry.oracle_registry_id = option::some(object::id(oracle_registry));
+}
+
+/// Get oracle registry ID if set
+/// 
+/// # Arguments
+/// * `registry` - Reference to the registry
+/// 
+/// # Returns
+/// * `Option<ID>` - Oracle registry ID if set, or None
+public fun get_oracle_registry_id(registry: &Registry): option::Option<ID> {
+    registry.oracle_registry_id
+}
+
+/// Check if oracle registry is configured
+/// 
+/// # Arguments
+/// * `registry` - Reference to the registry
+/// 
+/// # Returns
+/// * `bool` - True if oracle registry is configured
+public fun has_oracle_registry(registry: &Registry): bool {
+    option::is_some(&registry.oracle_registry_id)
+}
+
+/// Remove oracle registry (admin only)
+/// Disconnects the liquidity registry from oracle price feeds
+/// 
+/// # Arguments
+/// * `registry` - Mutable reference to the liquidity registry
+/// * `admin_cap` - Admin capability for authorization
+public fun remove_oracle_registry(
+    registry: &mut Registry,
+    admin_cap: &LiquidityAdminCap,
+) {
+    // Verify admin permission
+    assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
+    
+    // Verify version
+    assert!(registry.version == constants::current_version(), errors::version_mismatch());
+    
+    registry.oracle_registry_id = option::none<ID>();
+}
+
+/// Verify oracle registry matches expected ID
+/// Validates that the provided oracle registry matches the registered one
+/// 
+/// # Arguments
+/// * `registry` - Reference to the liquidity registry
+/// * `oracle_registry` - Reference to the oracle registry to verify
+/// 
+/// # Returns
+/// * `bool` - True if oracle registry matches
+public fun verify_oracle_registry(
+    registry: &Registry,
+    oracle_registry: &OracleRegistry,
+): bool {
+    if (option::is_some(&registry.oracle_registry_id)) {
+        let expected_id = *option::borrow(&registry.oracle_registry_id);
+        object::id(oracle_registry) == expected_id
+    } else {
+        false
+    }
 }
 
 // ===== Vault Management Functions =====
@@ -684,6 +778,7 @@ public fun create_registry_with_version_for_test(
         version,
         asset_vaults: table::new(ctx),
         admin_cap_id,
+        oracle_registry_id: option::none<ID>(),
     };
     
     (registry, admin_cap)

@@ -3,10 +3,22 @@
 module olend::account;
 
 use sui::table::{Self, Table};
+use sui::object::{Self, ID, UID};
+use sui::tx_context::{Self, TxContext};
+use sui::transfer;
+use sui::clock::{Self, Clock};
+use std::option::{Self, Option};
+use std::vector;
+use std::type_name::TypeName;
 
+// Oracle integration imports
+use pyth::state::{State as PythState};
+use pyth::price_info::PriceInfoObject;
 
 use olend::constants;
 use olend::errors;
+use olend::oracle::{Self, OracleRegistry, PriceData};
+use olend::vault::{Self, Vault};
 
 // ===== Struct Definitions =====
 
@@ -46,6 +58,45 @@ public struct SecurityTracker has store {
     last_suspicious_activity: u64,
 }
 
+/// Position data for health calculations
+public struct PositionData has copy, drop, store {
+    /// Asset type for this position
+    asset_type: TypeName,
+    /// Amount of the asset
+    amount: u64,
+    /// Decimal places for the asset
+    decimals: u8,
+}
+
+/// Create position data for health calculations
+public fun create_position_data(asset_type: TypeName, amount: u64, decimals: u8): PositionData {
+    PositionData {
+        asset_type,
+        amount,
+        decimals,
+    }
+}
+
+/// Health monitoring data for DeFi positions
+public struct HealthData has store, copy, drop {
+    /// Total collateral value in USD (with oracle decimals)
+    total_collateral_usd: u64,
+    /// Total debt value in USD (with oracle decimals)
+    total_debt_usd: u64,
+    /// Current health factor (precision: 100 = 1.00)
+    health_factor: u64,
+    /// Whether the account is healthy (health factor >= minimum)
+    is_healthy: bool,
+    /// Whether the account is eligible for liquidation
+    is_liquidatable: bool,
+    /// Maximum liquidation amount in USD
+    max_liquidation_usd: u64,
+    /// Last health update timestamp
+    last_health_update: u64,
+    /// Available borrowing capacity in USD
+    available_borrow_usd: u64,
+}
+
 /// User main account
 /// Stores user basic information and position ID list
 public struct Account has key {
@@ -60,7 +111,8 @@ public struct Account has key {
     points: u64,
     /// List of position IDs (does not store position details)
     position_ids: vector<ID>,
-
+    /// Health monitoring data for lending positions
+    health_data: HealthData,
     /// Account status information
     status: AccountStatus,
     /// Security tracking for rate limiting and attack prevention
@@ -171,7 +223,16 @@ public fun create_account(
         level: constants::default_user_level(),
         points: 0,
         position_ids: std::vector::empty<ID>(),
-
+        health_data: HealthData {
+            total_collateral_usd: 0,
+            total_debt_usd: 0,
+            health_factor: constants::health_factor_precision() * 10, // 10.00 = perfect health
+            is_healthy: true,
+            is_liquidatable: false,
+            max_liquidation_usd: 0,
+            last_health_update: current_time,
+            available_borrow_usd: 0,
+        },
         status,
         security,
     };
@@ -437,6 +498,94 @@ public fun get_time_since_last_activity(status: &AccountStatus, current_time: u6
     } else {
         0
     }
+}
+
+/// Gets the account health data
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// 
+/// # Returns
+/// * `HealthData` - Copy of current health data
+public fun get_health_data(account: &Account): HealthData {
+    account.health_data
+}
+
+/// Checks if account is healthy for lending operations
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// 
+/// # Returns
+/// * `bool` - True if account has healthy lending positions
+public fun is_account_healthy(account: &Account): bool {
+    account.health_data.is_healthy
+}
+
+/// Checks if account is eligible for liquidation
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// 
+/// # Returns
+/// * `bool` - True if account can be liquidated
+public fun is_account_liquidatable(account: &Account): bool {
+    account.health_data.is_liquidatable
+}
+
+/// Gets the account's health factor
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// 
+/// # Returns
+/// * `u64` - Health factor with precision (100 = 1.00)
+public fun get_health_factor(account: &Account): u64 {
+    account.health_data.health_factor
+}
+
+/// Gets the account's total collateral value in USD
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// 
+/// # Returns
+/// * `u64` - Total collateral value in USD (with oracle decimals)
+public fun get_total_collateral_usd(account: &Account): u64 {
+    account.health_data.total_collateral_usd
+}
+
+/// Gets the account's total debt value in USD
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// 
+/// # Returns
+/// * `u64` - Total debt value in USD (with oracle decimals)
+public fun get_total_debt_usd(account: &Account): u64 {
+    account.health_data.total_debt_usd
+}
+
+/// Gets the account's available borrowing capacity in USD
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// 
+/// # Returns
+/// * `u64` - Available borrowing capacity in USD
+public fun get_available_borrow_usd(account: &Account): u64 {
+    account.health_data.available_borrow_usd
+}
+
+/// Gets the maximum liquidation amount for the account
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// 
+/// # Returns
+/// * `u64` - Maximum liquidation amount in USD
+public fun get_max_liquidation_usd(account: &Account): u64 {
+    account.health_data.max_liquidation_usd
 }
 
 /// Gets the account creation timestamp
@@ -1206,6 +1355,279 @@ public fun get_security_status(
     )
 }
 
+// ===== Oracle-Based Health Monitoring Functions =====
+
+/// Calculate and update account health based on oracle prices
+/// Comprehensive health assessment for lending positions
+/// 
+/// # Arguments
+/// * `account` - Mutable reference to the account
+/// * `cap` - Reference to the account capability for authorization
+/// * `oracle_registry` - Reference to the oracle registry
+/// * `price_info_object` - Reference to the Pyth price info object
+/// * `clock` - Reference to the clock
+/// * `collateral_positions` - Vector of position data for collateral
+/// * `debt_positions` - Vector of position data for debt
+public fun update_health_with_oracle(
+    account: &mut Account,
+    cap: &AccountCap,
+    oracle_registry: &OracleRegistry,
+    price_info_object: &PriceInfoObject,
+    clock: &Clock,
+    collateral_positions: vector<PositionData>,
+    debt_positions: vector<PositionData>,
+) {
+    // Verify permission
+    assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
+    
+    // Verify version
+    assert!(account.version == constants::current_version(), errors::version_mismatch());
+    
+    // Check if oracle is available
+    if (oracle::is_oracle_paused(oracle_registry)) {
+        return // Skip update if oracle is paused
+    };
+    
+    let current_time = clock::timestamp_ms(clock);
+    
+    // Calculate total collateral value in USD
+    let mut total_collateral_usd = 0u64;
+    let collateral_count = std::vector::length(&collateral_positions);
+    let mut i = 0;
+    
+    while (i < collateral_count) {
+        let position_data = std::vector::borrow(&collateral_positions, i);
+        
+        // Check if oracle has price feed for this asset
+        if (oracle::has_price_feed_by_type(oracle_registry, position_data.asset_type)) {
+            let usd_value = oracle::calculate_usd_value_by_type(
+                oracle_registry,
+                price_info_object,
+                clock,
+                position_data.asset_type,
+                position_data.amount,
+                position_data.decimals
+            );
+            total_collateral_usd = total_collateral_usd + usd_value;
+        };
+        
+        i = i + 1;
+    };
+    
+    // Calculate total debt value in USD
+    let mut total_debt_usd = 0u64;
+    let debt_count = std::vector::length(&debt_positions);
+    i = 0;
+    
+    while (i < debt_count) {
+        let position_data = std::vector::borrow(&debt_positions, i);
+        
+        // Check if oracle has price feed for this asset
+        if (oracle::has_price_feed_by_type(oracle_registry, position_data.asset_type)) {
+            let usd_value = oracle::calculate_usd_value_by_type(
+                oracle_registry,
+                price_info_object,
+                clock,
+                position_data.asset_type,
+                position_data.amount,
+                position_data.decimals
+            );
+            total_debt_usd = total_debt_usd + usd_value;
+        };
+        
+        i = i + 1;
+    };
+    
+    // Calculate health factor and determine health status
+    let (health_factor, is_healthy, is_liquidatable, max_liquidation_usd, available_borrow_usd) = 
+        calculate_account_health_metrics(total_collateral_usd, total_debt_usd);
+    
+    // Update account health data
+    account.health_data = HealthData {
+        total_collateral_usd,
+        total_debt_usd,
+        health_factor,
+        is_healthy,
+        is_liquidatable,
+        max_liquidation_usd,
+        last_health_update: current_time,
+        available_borrow_usd,
+    };
+}
+
+/// Calculate health metrics based on collateral and debt values
+/// Internal function for health factor calculation
+/// 
+/// # Arguments
+/// * `total_collateral_usd` - Total collateral value in USD
+/// * `total_debt_usd` - Total debt value in USD
+/// 
+/// # Returns
+/// * `(u64, bool, bool, u64, u64)` - (health_factor, is_healthy, is_liquidatable, max_liquidation_usd, available_borrow_usd)
+fun calculate_account_health_metrics(
+    total_collateral_usd: u64,
+    total_debt_usd: u64,
+): (u64, bool, bool, u64, u64) {
+    if (total_debt_usd == 0) {
+        // No debt, account is perfectly healthy
+        let health_factor = constants::health_factor_precision() * 10; // 10.00
+        let available_borrow = if (total_collateral_usd > 0) {
+            (total_collateral_usd * constants::default_liquidation_threshold_bps()) / 
+            constants::basis_points_denominator()
+        } else {
+            0
+        };
+        return (health_factor, true, false, 0, available_borrow)
+    };
+    
+    if (total_collateral_usd == 0) {
+        // No collateral but has debt - extremely unhealthy
+        return (0, false, true, total_debt_usd, 0)
+    };
+    
+    // Calculate health factor: (collateral * liquidation_threshold) / debt
+    let liquidation_threshold = constants::default_liquidation_threshold_bps();
+    let adjusted_collateral = (total_collateral_usd * liquidation_threshold) / 
+        constants::basis_points_denominator();
+    
+    let health_factor = (adjusted_collateral * constants::health_factor_precision()) / total_debt_usd;
+    let min_health_factor = constants::min_health_factor();
+    
+    let is_healthy = health_factor >= min_health_factor;
+    let is_liquidatable = !is_healthy;
+    
+    // Calculate maximum liquidation amount (typically 50% of smaller value)
+    let max_liquidation_usd = if (is_liquidatable) {
+        let smaller_value = if (total_collateral_usd < total_debt_usd) {
+            total_collateral_usd
+        } else {
+            total_debt_usd
+        };
+        smaller_value / 2 // 50% liquidation
+    } else {
+        0
+    };
+    
+    // Calculate available borrowing capacity
+    let max_borrow_capacity = (adjusted_collateral * constants::health_factor_precision()) / 
+        min_health_factor;
+    let available_borrow_usd = if (max_borrow_capacity > total_debt_usd) {
+        max_borrow_capacity - total_debt_usd
+    } else {
+        0
+    };
+    
+    (health_factor, is_healthy, is_liquidatable, max_liquidation_usd, available_borrow_usd)
+}
+
+/// Check if account health needs to be updated
+/// Determines if health data is stale and requires refresh
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// * `clock` - Reference to the clock
+/// * `max_staleness_ms` - Maximum allowed staleness in milliseconds
+/// 
+/// # Returns
+/// * `bool` - True if health data needs update
+public fun health_needs_update(
+    account: &Account,
+    clock: &Clock,
+    max_staleness_ms: u64,
+): bool {
+    let current_time = clock::timestamp_ms(clock);
+    let time_since_update = if (current_time >= account.health_data.last_health_update) {
+        current_time - account.health_data.last_health_update
+    } else {
+        0
+    };
+    
+    time_since_update > max_staleness_ms
+}
+
+/// Validate account health for a specific operation
+/// Checks if account is healthy enough for borrowing operations
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// * `operation_type` - Type of operation (1=deposit, 2=withdraw, 3=borrow, 4=repay)
+/// * `additional_debt_usd` - Additional debt that would be incurred
+/// 
+/// # Returns
+/// * `bool` - True if operation is allowed based on health
+public fun validate_health_for_operation(
+    account: &Account,
+    operation_type: u8,
+    additional_debt_usd: u64,
+): bool {
+    // Allow all operations if account has no debt
+    if (account.health_data.total_debt_usd == 0 && additional_debt_usd == 0) {
+        return true
+    };
+    
+    // Check based on operation type
+    if (operation_type == 1) { // Deposit - always allowed as it improves health
+        true
+    } else if (operation_type == 2) { // Withdraw - check if health remains good
+        // This would require recalculating health with reduced collateral
+        // For simplicity, require healthy status
+        account.health_data.is_healthy
+    } else if (operation_type == 3) { // Borrow - check available capacity
+        account.health_data.is_healthy && 
+        additional_debt_usd <= account.health_data.available_borrow_usd
+    } else if (operation_type == 4) { // Repay - always allowed as it improves health
+        true
+    } else {
+        false // Unknown operation type
+    }
+}
+
+/// Get detailed health summary for account
+/// Comprehensive health information for monitoring and UI
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// 
+/// # Returns
+/// * `(u64, u64, u64, bool, bool, u64, u64, u64)` - Detailed health metrics
+public fun get_detailed_health_summary(account: &Account): (u64, u64, u64, bool, bool, u64, u64, u64) {
+    (
+        account.health_data.total_collateral_usd,
+        account.health_data.total_debt_usd,
+        account.health_data.health_factor,
+        account.health_data.is_healthy,
+        account.health_data.is_liquidatable,
+        account.health_data.max_liquidation_usd,
+        account.health_data.available_borrow_usd,
+        account.health_data.last_health_update,
+    )
+}
+
+/// Emergency health check with circuit breaker
+/// Performs health check with safety mechanisms
+/// 
+/// # Arguments
+/// * `account` - Reference to the account
+/// * `oracle_registry` - Reference to oracle registry
+/// * `emergency_threshold` - Health factor threshold for emergency (e.g., 110 = 1.10)
+/// 
+/// # Returns
+/// * `bool` - True if account is in emergency state
+public fun emergency_health_check(
+    account: &Account,
+    oracle_registry: &OracleRegistry,
+    emergency_threshold: u64,
+): bool {
+    // If oracle is paused, use cached health data
+    if (oracle::is_oracle_paused(oracle_registry)) {
+        return account.health_data.health_factor < emergency_threshold
+    };
+    
+    // Check if health factor is below emergency threshold
+    account.health_data.health_factor < emergency_threshold && 
+    account.health_data.total_debt_usd > 0
+}
+
 // ===== Test Helper Functions =====
 
 #[test_only]
@@ -1235,7 +1657,16 @@ public fun create_account_for_test(
         level: constants::default_user_level(),
         points: 0,
         position_ids: std::vector::empty<ID>(),
-
+        health_data: HealthData {
+            total_collateral_usd: 0,
+            total_debt_usd: 0,
+            health_factor: constants::health_factor_precision() * 10, // 10.00 = perfect health
+            is_healthy: true,
+            is_liquidatable: false,
+            max_liquidation_usd: 0,
+            last_health_update: current_time,
+            available_borrow_usd: 0,
+        },
         status,
         security,
     };
@@ -1280,6 +1711,16 @@ public fun create_inconsistent_account_for_test(
         level: invalid_level, // Invalid level
         points: 0,
         position_ids: std::vector::empty<ID>(),
+        health_data: HealthData {
+            total_collateral_usd: 0,
+            total_debt_usd: 0,
+            health_factor: constants::health_factor_precision() * 10, // 10.00 = perfect health
+            is_healthy: true,
+            is_liquidatable: false,
+            max_liquidation_usd: 0,
+            last_health_update: current_time,
+            available_borrow_usd: 0,
+        },
         status,
         security,
     };
@@ -1324,6 +1765,16 @@ public fun create_account_with_security_for_test(
         level: constants::default_user_level(),
         points: 0,
         position_ids: std::vector::empty<ID>(),
+        health_data: HealthData {
+            total_collateral_usd: 0,
+            total_debt_usd: 0,
+            health_factor: constants::health_factor_precision() * 10, // 10.00 = perfect health
+            is_healthy: true,
+            is_liquidatable: false,
+            max_liquidation_usd: 0,
+            last_health_update: current_time,
+            available_borrow_usd: 0,
+        },
         status,
         security,
     };
