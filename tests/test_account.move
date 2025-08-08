@@ -1,14 +1,9 @@
 /// Account module unit tests
 /// Tests AccountRegistry creation, Account management, and permission control
 #[test_only]
-#[allow(duplicate_alias)]
 module olend::test_account;
 
 use sui::test_scenario;
-use sui::object;
-
-use std::vector;
-use std::option;
 
 use olend::account;
 use olend::constants;

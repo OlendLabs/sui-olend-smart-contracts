@@ -1,21 +1,14 @@
 /// Data Consistency Tests
 /// Tests atomic operations, consistency validation, and concurrent access safety
 #[test_only]
-#[allow(duplicate_alias, unused_use)]
 module olend::test_data_consistency;
 
 use sui::test_scenario;
-use sui::object;
-use sui::coin;
 use sui::sui::SUI;
 
-use std::vector;
-
 use olend::account;
-use olend::vault;
 use olend::liquidity;
 use olend::constants;
-use olend::errors;
 
 const ADMIN: address = @0xAD;
 const USER1: address = @0x1;
@@ -49,7 +42,7 @@ fun test_atomic_update_level_and_points() {
     
     // Verify activity was updated
     let status = account::get_status(&account);
-    let current_time = sui::tx_context::epoch_timestamp_ms(test_scenario::ctx(&mut scenario));
+    let current_time = tx_context::epoch_timestamp_ms(test_scenario::ctx(&mut scenario));
     assert!(account::get_status_last_activity(&status) <= current_time, 2);
     
     // Cleanup
@@ -87,7 +80,7 @@ fun test_atomic_add_position_and_update_activity() {
     
     // Verify activity was updated
     let status = account::get_status(&account);
-    let current_time = sui::tx_context::epoch_timestamp_ms(test_scenario::ctx(&mut scenario));
+    let current_time = tx_context::epoch_timestamp_ms(test_scenario::ctx(&mut scenario));
     assert!(account::get_status_last_activity(&status) <= current_time, 2);
     
     // Cleanup
@@ -134,7 +127,7 @@ fun test_atomic_remove_position_and_update_activity() {
     
     // Verify activity was updated
     let status = account::get_status(&account);
-    let current_time = sui::tx_context::epoch_timestamp_ms(test_scenario::ctx(&mut scenario));
+    let current_time = tx_context::epoch_timestamp_ms(test_scenario::ctx(&mut scenario));
     assert!(account::get_status_last_activity(&status) <= current_time, 3);
     
     // Cleanup
@@ -226,7 +219,7 @@ fun test_validate_account_consistency_invalid() {
     let mut scenario = test_scenario::begin(USER1);
     
     // Create account with invalid data
-    let future_time = sui::tx_context::epoch_timestamp_ms(test_scenario::ctx(&mut scenario)) + 1000000;
+    let future_time = tx_context::epoch_timestamp_ms(test_scenario::ctx(&mut scenario)) + 1000000;
     let (account, account_cap) = account::create_inconsistent_account_for_test(
         USER1,
         15, // Invalid level (> max_user_level)
@@ -414,7 +407,7 @@ fun test_account_restriction_status() {
 
 /// Test account restriction due to suspicious activity
 #[test]
-#[expected_failure(abort_code = 2016)]
+#[expected_failure(abort_code = 2016, location = olend::account)]
 fun test_account_restriction() {
     let mut scenario = test_scenario::begin(USER1);
     
@@ -663,7 +656,7 @@ fun test_atomic_register_and_activate_vault() {
 
 /// Test atomic operation failure scenarios
 #[test]
-#[expected_failure(abort_code = 2007)]
+#[expected_failure(abort_code = 2007, location = olend::account)]
 fun test_atomic_operation_with_wrong_cap() {
     let mut scenario = test_scenario::begin(USER1);
     
@@ -696,7 +689,7 @@ fun test_atomic_operation_with_wrong_cap() {
 
 /// Test batch operation with invalid position
 #[test]
-#[expected_failure(abort_code = 2011)]
+#[expected_failure(abort_code = 2011, location = olend::account)]
 fun test_batch_operation_with_invalid_position() {
     let mut scenario = test_scenario::begin(USER1);
     
@@ -729,7 +722,7 @@ fun test_batch_operation_with_invalid_position() {
 
 /// Test rate limit enforcement failure
 #[test]
-#[expected_failure(abort_code = 2013)]
+#[expected_failure(abort_code = 2013, location = olend::account)]
 fun test_rate_limit_enforcement_failure() {
     let mut scenario = test_scenario::begin(USER1);
     
@@ -752,7 +745,7 @@ fun test_rate_limit_enforcement_failure() {
 
 /// Test replay attack enforcement failure
 #[test]
-#[expected_failure(abort_code = 2014)]
+#[expected_failure(abort_code = 2014, location = olend::account)]
 fun test_replay_attack_enforcement_failure() {
     let mut scenario = test_scenario::begin(USER1);
     
@@ -782,7 +775,7 @@ fun test_replay_attack_enforcement_failure() {
 
 /// Test account restriction failure
 #[test]
-#[expected_failure(abort_code = 2016)]
+#[expected_failure(abort_code = 2016, location = olend::account)]
 fun test_account_restriction_failure() {
     let mut scenario = test_scenario::begin(USER1);
     

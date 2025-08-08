@@ -1,12 +1,9 @@
 /// Module initialization tests
 /// Tests the init and init_for_testing functions
 #[test_only]
-#[allow(duplicate_alias)]
 module olend::test_init;
 
 use sui::test_scenario;
-use sui::object;
-use std::option;
 
 use olend::liquidity;
 use olend::constants;

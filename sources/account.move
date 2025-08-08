@@ -13,11 +13,11 @@ use olend::errors;
 /// Global account registry
 /// Manages all user accounts and provides unified account management
 public struct AccountRegistry has key {
-    id: sui::object::UID,
+    id: UID,
     /// Protocol version for access control
     version: u64,
     /// Mapping from user address to their Account ID
-    accounts: Table<address, sui::object::ID>,
+    accounts: Table<address, ID>,
     /// Account counter for generating unique account IDs
     account_counter: u64,
 
@@ -49,7 +49,7 @@ public struct SecurityTracker has store {
 /// User main account
 /// Stores user basic information and position ID list
 public struct Account has key {
-    id: sui::object::UID,
+    id: UID,
     /// Protocol version for access control
     version: u64,
     /// Account owner address
@@ -59,7 +59,7 @@ public struct Account has key {
     /// User points for rewards and benefits
     points: u64,
     /// List of position IDs (does not store position details)
-    position_ids: vector<sui::object::ID>,
+    position_ids: vector<ID>,
 
     /// Account status information
     status: AccountStatus,
@@ -70,9 +70,9 @@ public struct Account has key {
 /// Account capability (non-transferable)
 /// Used for permission verification and account operations
 public struct AccountCap has key {
-    id: sui::object::UID,
+    id: UID,
     /// Corresponding Account ID
-    account_id: sui::object::ID,
+    account_id: ID,
     /// Account owner address
     owner: address,
 }
@@ -91,9 +91,9 @@ public struct AccountCap has key {
 /// # Returns
 /// * `AccountRegistry` - Newly created account registry
 /// * `AdminCap` - Admin capability for permission control
-fun create_account_registry(ctx: &mut sui::tx_context::TxContext): AccountRegistry {
+fun create_account_registry(ctx: &mut TxContext): AccountRegistry {
     let registry = AccountRegistry {
-        id: sui::object::new(ctx),
+        id: object::new(ctx),
         version: constants::current_version(),
         accounts: table::new(ctx),
         account_counter: 0,
@@ -107,9 +107,9 @@ fun create_account_registry(ctx: &mut sui::tx_context::TxContext): AccountRegist
 /// 
 /// # Arguments
 /// * `ctx` - Transaction context
-fun init(ctx: &mut sui::tx_context::TxContext) {
+fun init(ctx: &mut TxContext) {
     let registry = create_account_registry(ctx);
-    sui::transfer::share_object(registry);
+    transfer::share_object(registry);
 }
 
 #[test_only]
@@ -119,7 +119,7 @@ fun init(ctx: &mut sui::tx_context::TxContext) {
 /// 
 /// # Arguments
 /// * `ctx` - Transaction context
-public fun init_for_testing(ctx: &mut sui::tx_context::TxContext) {
+public fun init_for_testing(ctx: &mut TxContext) {
     init(ctx)
 }
 
@@ -139,7 +139,7 @@ public fun init_for_testing(ctx: &mut sui::tx_context::TxContext) {
 public fun create_account(
     registry: &mut AccountRegistry,
     user: address,
-    ctx: &mut sui::tx_context::TxContext
+    ctx: &mut TxContext
 ): (Account, AccountCap) {
     // Verify version
     assert!(registry.version == constants::current_version(), errors::version_mismatch());
@@ -148,7 +148,7 @@ public fun create_account(
     assert!(!table::contains(&registry.accounts, user), errors::account_already_exists());
     
     // Create account status
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     let status = AccountStatus {
         created_at: current_time,
         last_activity: current_time,
@@ -165,22 +165,22 @@ public fun create_account(
     
     // Create account
     let account = Account {
-        id: sui::object::new(ctx),
+        id: object::new(ctx),
         version: constants::current_version(),
         owner: user,
         level: constants::default_user_level(),
         points: 0,
-        position_ids: std::vector::empty<sui::object::ID>(),
+        position_ids: std::vector::empty<ID>(),
 
         status,
         security,
     };
     
-    let account_id = sui::object::id(&account);
+    let account_id = object::id(&account);
     
     // Create account capability
     let account_cap = AccountCap {
-        id: sui::object::new(ctx),
+        id: object::new(ctx),
         account_id,
         owner: user,
     };
@@ -202,11 +202,11 @@ public fun create_account(
 public fun create_and_transfer_account(
     registry: &mut AccountRegistry,
     user: address,
-    ctx: &mut sui::tx_context::TxContext
+    ctx: &mut TxContext
 ) {
     let (account, account_cap) = create_account(registry, user, ctx);
-    sui::transfer::transfer(account, user);
-    sui::transfer::transfer(account_cap, user);
+    transfer::transfer(account, user);
+    transfer::transfer(account_cap, user);
 }
 
 /// Finds user account by address
@@ -217,11 +217,11 @@ public fun create_and_transfer_account(
 /// 
 /// # Returns
 /// * `Option<ID>` - Account ID if found, or None
-public fun get_account(registry: &AccountRegistry, user: address): std::option::Option<sui::object::ID> {
+public fun get_account(registry: &AccountRegistry, user: address): std::option::Option<ID> {
     if (table::contains(&registry.accounts, user)) {
         std::option::some(*table::borrow(&registry.accounts, user))
     } else {
-        std::option::none<sui::object::ID>()
+        std::option::none<ID>()
     }
 }
 
@@ -246,7 +246,7 @@ public fun account_exists(registry: &AccountRegistry, user: address): bool {
 /// # Returns
 /// * `bool` - True if capability matches the account
 public fun verify_account_cap(account: &Account, cap: &AccountCap): bool {
-    sui::object::id(account) == cap.account_id && account.owner == cap.owner
+    object::id(account) == cap.account_id && account.owner == cap.owner
 }
 
 // ===== Account Information Management Functions =====
@@ -260,7 +260,7 @@ public fun verify_account_cap(account: &Account, cap: &AccountCap): bool {
 public fun add_position(
     account: &mut Account,
     cap: &AccountCap,
-    position_id: sui::object::ID
+    position_id: ID
 ) {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
@@ -283,7 +283,7 @@ public fun add_position(
 public fun remove_position(
     account: &mut Account,
     cap: &AccountCap,
-    position_id: sui::object::ID
+    position_id: ID
 ) {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
@@ -334,7 +334,7 @@ public fun update_level_and_points(
 public fun update_activity(
     account: &mut Account,
     cap: &AccountCap,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ) {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
@@ -343,7 +343,7 @@ public fun update_activity(
     assert!(account.version == constants::current_version(), errors::version_mismatch());
     
     // Update last activity timestamp
-    account.status.last_activity = sui::tx_context::epoch_timestamp_ms(ctx);
+    account.status.last_activity = tx_context::epoch_timestamp_ms(ctx);
 }
 
 // ===== Account Status Management Functions =====
@@ -359,7 +359,7 @@ public fun update_activity(
 /// 
 /// # Returns
 /// * `vector<ID>` - List of position IDs
-public fun get_position_ids(account: &Account): vector<sui::object::ID> {
+public fun get_position_ids(account: &Account): vector<ID> {
     account.position_ids
 }
 
@@ -556,7 +556,7 @@ public fun verify_user_identity(
     
     // Verify account ID matches registry record
     let registered_id = *table::borrow(&registry.accounts, account.owner);
-    if (registered_id != sui::object::id(account)) {
+    if (registered_id != object::id(account)) {
         return false
     };
     
@@ -588,10 +588,10 @@ public fun get_user_level_for_module(account: &Account, cap: &AccountCap): u8 {
 public fun update_user_activity_for_module(
     account: &mut Account,
     cap: &AccountCap,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ) {
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
-    account.status.last_activity = sui::tx_context::epoch_timestamp_ms(ctx);
+    account.status.last_activity = tx_context::epoch_timestamp_ms(ctx);
 }
 
 /// Adds points to user account from cross-module operations
@@ -619,7 +619,7 @@ public fun add_user_points_for_module(
 /// 
 /// # Returns
 /// * `ID` - Account ID
-public fun get_account_id_from_cap(cap: &AccountCap): sui::object::ID {
+public fun get_account_id_from_cap(cap: &AccountCap): ID {
     cap.account_id
 }
 
@@ -650,7 +650,7 @@ public fun atomic_update_level_and_points(
     cap: &AccountCap,
     new_level: u8,
     points_to_add: u64,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ) {
     // Verify permission first
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
@@ -664,7 +664,7 @@ public fun atomic_update_level_and_points(
     // Perform atomic updates
     account.level = new_level;
     account.points = account.points + points_to_add;
-    account.status.last_activity = sui::tx_context::epoch_timestamp_ms(ctx);
+    account.status.last_activity = tx_context::epoch_timestamp_ms(ctx);
 }
 
 /// Atomic operation to add position and update activity
@@ -678,8 +678,8 @@ public fun atomic_update_level_and_points(
 public fun atomic_add_position_and_update_activity(
     account: &mut Account,
     cap: &AccountCap,
-    position_id: sui::object::ID,
-    ctx: &sui::tx_context::TxContext
+    position_id: ID,
+    ctx: &TxContext
 ) {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
@@ -691,7 +691,7 @@ public fun atomic_add_position_and_update_activity(
     if (!std::vector::contains(&account.position_ids, &position_id)) {
         std::vector::push_back(&mut account.position_ids, position_id);
     };
-    account.status.last_activity = sui::tx_context::epoch_timestamp_ms(ctx);
+    account.status.last_activity = tx_context::epoch_timestamp_ms(ctx);
 }
 
 /// Atomic operation to remove position and update activity
@@ -705,8 +705,8 @@ public fun atomic_add_position_and_update_activity(
 public fun atomic_remove_position_and_update_activity(
     account: &mut Account,
     cap: &AccountCap,
-    position_id: sui::object::ID,
-    ctx: &sui::tx_context::TxContext
+    position_id: ID,
+    ctx: &TxContext
 ) {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
@@ -719,7 +719,7 @@ public fun atomic_remove_position_and_update_activity(
     assert!(found, errors::position_id_not_found());
     
     std::vector::remove(&mut account.position_ids, index);
-    account.status.last_activity = sui::tx_context::epoch_timestamp_ms(ctx);
+    account.status.last_activity = tx_context::epoch_timestamp_ms(ctx);
 }
 
 /// Validates account data consistency
@@ -735,7 +735,7 @@ public fun atomic_remove_position_and_update_activity(
 public fun validate_account_consistency(
     account: &Account,
     cap: &AccountCap,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ): bool {
     // Basic capability verification
     if (!verify_account_cap(account, cap)) {
@@ -753,7 +753,7 @@ public fun validate_account_consistency(
     };
     
     // Timestamp consistency checks
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     if (account.status.created_at > current_time) {
         return false
     };
@@ -800,7 +800,7 @@ public fun check_concurrent_access_safety(
     registry: &AccountRegistry,
     account: &Account,
     cap: &AccountCap,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ): bool {
     // Verify account exists in registry
     if (!verify_user_identity(registry, account, cap)) {
@@ -818,7 +818,7 @@ public fun check_concurrent_access_safety(
     };
     
     // Additional safety checks for concurrent access
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     
     // Check if account has been recently modified (within last second)
     // This helps detect potential concurrent modifications
@@ -849,9 +849,9 @@ public fun check_concurrent_access_safety(
 public fun atomic_batch_position_update(
     account: &mut Account,
     cap: &AccountCap,
-    positions_to_add: vector<sui::object::ID>,
-    positions_to_remove: vector<sui::object::ID>,
-    ctx: &sui::tx_context::TxContext
+    positions_to_add: vector<ID>,
+    positions_to_remove: vector<ID>,
+    ctx: &TxContext
 ) {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
@@ -900,7 +900,7 @@ public fun atomic_batch_position_update(
     };
     
     // Update activity timestamp
-    account.status.last_activity = sui::tx_context::epoch_timestamp_ms(ctx);
+    account.status.last_activity = tx_context::epoch_timestamp_ms(ctx);
 }
 
 /// Registry-level consistency validation
@@ -940,12 +940,12 @@ public fun validate_registry_consistency(registry: &AccountRegistry): bool {
 public fun check_rate_limit(
     account: &mut Account,
     cap: &AccountCap,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ): bool {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
     
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     let window_duration = constants::rate_limit_window_ms();
     
     // Check if we need to reset the window
@@ -974,7 +974,7 @@ public fun check_rate_limit(
 public fun enforce_rate_limit(
     account: &mut Account,
     cap: &AccountCap,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ) {
     assert!(check_rate_limit(account, cap, ctx), errors::rate_limit_exceeded());
 }
@@ -1038,12 +1038,12 @@ public fun detect_suspicious_activity(
     cap: &AccountCap,
     operation_type: u8,
     amount: u64,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ): bool {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
     
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     
     // Check for suspicious patterns
     let mut suspicious = false;
@@ -1084,12 +1084,12 @@ public fun detect_suspicious_activity(
 public fun record_suspicious_activity(
     account: &mut Account,
     cap: &AccountCap,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ) {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
     
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     
     // Increment suspicious activity counter
     account.security.suspicious_activity_count = account.security.suspicious_activity_count + 1;
@@ -1112,9 +1112,9 @@ public fun record_suspicious_activity(
 /// * `bool` - True if account is restricted
 public fun is_account_restricted(
     account: &Account,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ): bool {
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     
     // Check if account has too many suspicious activities
     if (account.security.suspicious_activity_count >= constants::max_suspicious_activities()) {
@@ -1144,7 +1144,7 @@ public fun comprehensive_security_check(
     operation_type: u8,
     amount: u64,
     tx_hash: vector<u8>,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ) {
     // Check if account is restricted
     assert!(!is_account_restricted(account, ctx), errors::account_restricted());
@@ -1170,12 +1170,12 @@ public fun comprehensive_security_check(
 public fun reset_security_counters(
     account: &mut Account,
     cap: &AccountCap,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ) {
     // Verify permission
     assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
     
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     
     // Reset all security counters
     account.security.operation_count = 0;
@@ -1195,7 +1195,7 @@ public fun reset_security_counters(
 /// * `(u64, u64, u64, bool)` - (operation_count, suspicious_activity_count, window_start, is_restricted)
 public fun get_security_status(
     account: &Account,
-    ctx: &sui::tx_context::TxContext
+    ctx: &TxContext
 ): (u64, u64, u64, bool) {
     let is_restricted = is_account_restricted(account, ctx);
     (
@@ -1212,9 +1212,9 @@ public fun get_security_status(
 /// Test helper to create account without registry checks
 public fun create_account_for_test(
     user: address,
-    ctx: &mut sui::tx_context::TxContext
+    ctx: &mut TxContext
 ): (Account, AccountCap) {
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     let status = AccountStatus {
         created_at: current_time,
         last_activity: current_time,
@@ -1229,21 +1229,21 @@ public fun create_account_for_test(
     };
     
     let account = Account {
-        id: sui::object::new(ctx),
+        id: object::new(ctx),
         version: constants::current_version(),
         owner: user,
         level: constants::default_user_level(),
         points: 0,
-        position_ids: std::vector::empty<sui::object::ID>(),
+        position_ids: std::vector::empty<ID>(),
 
         status,
         security,
     };
     
-    let account_id = sui::object::id(&account);
+    let account_id = object::id(&account);
     
     let account_cap = AccountCap {
-        id: sui::object::new(ctx),
+        id: object::new(ctx),
         account_id,
         owner: user,
     };
@@ -1257,9 +1257,9 @@ public fun create_inconsistent_account_for_test(
     user: address,
     invalid_level: u8,
     future_timestamp: u64,
-    ctx: &mut sui::tx_context::TxContext
+    ctx: &mut TxContext
 ): (Account, AccountCap) {
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     let status = AccountStatus {
         created_at: current_time,
         last_activity: future_timestamp, // Invalid: future timestamp
@@ -1274,20 +1274,20 @@ public fun create_inconsistent_account_for_test(
     };
     
     let account = Account {
-        id: sui::object::new(ctx),
+        id: object::new(ctx),
         version: constants::current_version(),
         owner: user,
         level: invalid_level, // Invalid level
         points: 0,
-        position_ids: std::vector::empty<sui::object::ID>(),
+        position_ids: std::vector::empty<ID>(),
         status,
         security,
     };
     
-    let account_id = sui::object::id(&account);
+    let account_id = object::id(&account);
     
     let account_cap = AccountCap {
-        id: sui::object::new(ctx),
+        id: object::new(ctx),
         account_id,
         owner: user,
     };
@@ -1301,9 +1301,9 @@ public fun create_account_with_security_for_test(
     user: address,
     operation_count: u64,
     suspicious_count: u64,
-    ctx: &mut sui::tx_context::TxContext
+    ctx: &mut TxContext
 ): (Account, AccountCap) {
-    let current_time = sui::tx_context::epoch_timestamp_ms(ctx);
+    let current_time = tx_context::epoch_timestamp_ms(ctx);
     let status = AccountStatus {
         created_at: current_time,
         last_activity: current_time,
@@ -1318,20 +1318,20 @@ public fun create_account_with_security_for_test(
     };
     
     let account = Account {
-        id: sui::object::new(ctx),
+        id: object::new(ctx),
         version: constants::current_version(),
         owner: user,
         level: constants::default_user_level(),
         points: 0,
-        position_ids: std::vector::empty<sui::object::ID>(),
+        position_ids: std::vector::empty<ID>(),
         status,
         security,
     };
     
-    let account_id = sui::object::id(&account);
+    let account_id = object::id(&account);
     
     let account_cap = AccountCap {
-        id: sui::object::new(ctx),
+        id: object::new(ctx),
         account_id,
         owner: user,
     };

@@ -26,8 +26,8 @@ public fun create_version_info(major: u8, minor: u8, patch: u8): VersionInfo {
 }
 
 /// Get current timestamp
-public fun current_timestamp(ctx: &sui::tx_context::TxContext): Timestamp {
-    Timestamp { seconds: sui::tx_context::epoch_timestamp_ms(ctx) / 1000 }
+public fun current_timestamp(ctx: &TxContext): Timestamp {
+    Timestamp { seconds: tx_context::epoch_timestamp_ms(ctx) / 1000 }
 }
 
 /// Calculate days difference between two timestamps
@@ -59,7 +59,7 @@ public fun is_valid_allowance_type(allowance_type: u8): bool {
 }
 
 /// Get current day number based on timestamp
-public fun get_current_day(ctx: &sui::tx_context::TxContext): u64 {
+public fun get_current_day(ctx: &TxContext): u64 {
     let timestamp = current_timestamp(ctx);
     timestamp.seconds / constants::seconds_per_day()
 }

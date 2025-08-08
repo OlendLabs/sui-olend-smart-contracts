@@ -28,7 +28,7 @@ module olend::test_helpers;
     }
     
     /// Create SUI coins for testing
-    public fun mint_sui_for_testing(amount: u64, ctx: &mut sui::tx_context::TxContext): Coin<SUI> {
+    public fun mint_sui_for_testing(amount: u64, ctx: &mut TxContext): Coin<SUI> {
         coin::mint_for_testing<SUI>(amount, ctx)
     }
     

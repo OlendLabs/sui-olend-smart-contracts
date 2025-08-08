@@ -1,14 +1,9 @@
 /// Registry module unit tests
 /// Tests Registry creation, Vault management, and query functions
 #[test_only]
-#[allow(duplicate_alias)]
 module olend::test_registry;
 
 use sui::test_scenario;
-use sui::object;
-
-use std::vector;
-use std::option;
 
 use olend::liquidity;
 use olend::constants;

@@ -1,15 +1,9 @@
 /// Liquidity Module - Registry management system
 /// Implements Registry for managing single Vault per asset type
-#[allow(duplicate_alias)]
 module olend::liquidity;
 
-use sui::object::{Self, UID, ID};
-use sui::tx_context::{Self, TxContext};
 use sui::table::{Self, Table};
-use sui::transfer;
 use std::type_name::{Self, TypeName};
-use std::option::{Self, Option};
-use std::vector;
 
 use olend::constants;
 use olend::errors;
@@ -140,7 +134,7 @@ public fun register_vault<T>(
 /// 
 /// # Returns
 /// * `Option<ID>` - ID of the Vault if it exists and is active, or None
-public fun get_default_vault<T>(registry: &Registry): Option<ID> {
+public fun get_default_vault<T>(registry: &Registry): option::Option<ID> {
     let asset_type = type_name::get<T>();
     
     if (table::contains(&registry.asset_vaults, asset_type)) {

@@ -1,7 +1,6 @@
 /// Vault<T> module unit tests
 /// Tests Vault creation, ERC-4626 compatibility, and core operations
 #[test_only]
-#[allow(unused_use)]
 module olend::test_vault;
 
 use sui::test_scenario;
@@ -10,7 +9,6 @@ use sui::test_utils;
 
 use olend::liquidity;
 use olend::vault;
-use olend::errors;
 use olend::constants;
 
 // Mock coin type for testing

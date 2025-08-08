@@ -17,7 +17,7 @@ use olend::ytoken::{Self, YToken};
 /// Unified liquidity vault, compatible with ERC-4626 standard
 /// Manages assets and shares for a specific asset type
 public struct Vault<phantom T> has key, store {
-    id: sui::object::UID,
+    id: UID,
     /// Protocol version for access control
     version: u64,
     /// Total assets in the vault (including borrowed assets)
