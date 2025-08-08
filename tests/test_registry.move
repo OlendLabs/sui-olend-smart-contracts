@@ -30,7 +30,7 @@ fun test_create_registry() {
     
     // Get shared Registry and AdminCap
     let registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Verify initial state
     assert!(liquidity::get_version(&registry) == constants::current_version(), 0);
@@ -54,7 +54,7 @@ fun test_register_vault() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Create mock Vault ID
     let vault_id = object::id_from_address(@0x1);
@@ -88,7 +88,7 @@ fun test_single_vault_per_asset() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // 创建虚拟 Vault ID
     let vault_id_1 = object::id_from_address(@0x1);
@@ -137,7 +137,7 @@ fun test_different_asset_types() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // 为不同资产类型创建 Vault
     let test_vault_id = object::id_from_address(@0x1);
@@ -182,7 +182,7 @@ fun test_pause_vault() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // 注册一个 Vault
     let vault_id_1 = object::id_from_address(@0x1);
@@ -228,7 +228,7 @@ fun test_resume_vault() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // 注册并暂停一个 Vault
     let vault_id = object::id_from_address(@0x1);
@@ -269,7 +269,7 @@ fun test_set_default_vault() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // 注册一个 Vault（自动成为默认）
     let vault_id_1 = object::id_from_address(@0x1);
@@ -305,7 +305,7 @@ fun test_unauthorized_access() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let _admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let _admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Create another Registry with different AdminCap (simulate unauthorized user)
     test_scenario::next_tx(&mut scenario, @0x999); // Different user
@@ -313,7 +313,7 @@ fun test_unauthorized_access() {
     test_scenario::next_tx(&mut scenario, @0x999);
     
     let fake_registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let fake_admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let fake_admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     let vault_id = object::id_from_address(@0x1);
     
@@ -340,7 +340,7 @@ fun test_pause_nonexistent_vault() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     let vault_id = object::id_from_address(@0x1);
     
@@ -365,7 +365,7 @@ fun test_set_inactive_vault_as_default() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // 注册并暂停一个 Vault
     let vault_id = object::id_from_address(@0x1);
@@ -393,7 +393,7 @@ fun test_cannot_register_second_active_vault() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Register first Vault
     let vault_id_1 = object::id_from_address(@0x1);
@@ -422,7 +422,7 @@ fun test_registry_version_control() {
     
     // Get shared Registry and AdminCap
     let registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Verify version is current
     assert!(liquidity::get_version(&registry) == constants::current_version(), 0);
@@ -444,7 +444,7 @@ fun test_registry_multiple_operations() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Register vaults for multiple asset types
     let sui_vault_id = object::id_from_address(@0x1);
@@ -483,7 +483,7 @@ fun test_resume_nonexistent_vault() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     let vault_id = object::id_from_address(@0x1);
     
@@ -508,7 +508,7 @@ fun test_set_default_wrong_vault_id() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Register a vault
     let vault_id_1 = object::id_from_address(@0x1);
@@ -536,7 +536,7 @@ fun test_global_emergency_pause_all() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Verify initial state
     assert!(!liquidity::is_global_emergency_state(&registry), 0);
@@ -563,7 +563,7 @@ fun test_restore_from_global_emergency() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Trigger global emergency pause
     liquidity::global_emergency_pause_all(&mut registry, &admin_cap);
@@ -590,7 +590,7 @@ fun test_global_emergency_blocks_vault_registration() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Trigger global emergency pause
     liquidity::global_emergency_pause_all(&mut registry, &admin_cap);
@@ -616,7 +616,7 @@ fun test_global_emergency_pause_security() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Test that only the correct admin_cap can trigger global emergency
     let admin_cap_id = liquidity::get_admin_cap_id(&registry);

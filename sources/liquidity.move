@@ -37,9 +37,9 @@ public struct VaultInfo has store {
     is_active: bool,
 }
 
-/// Admin capability for permission control
-/// Used to authorize administrative operations
-public struct AdminCap has key, store {
+/// Liquidity protocol admin capability for permission control
+/// Used to authorize liquidity and vault management operations
+public struct LiquidityAdminCap has key, store {
     id: UID,
 }
 
@@ -53,9 +53,9 @@ public struct AdminCap has key, store {
 /// 
 /// # Returns
 /// * `Registry` - Newly created registry
-/// * `AdminCap` - Admin capability for permission control
-fun create_registry(ctx: &mut TxContext): (Registry, AdminCap) {
-    let admin_cap = AdminCap {
+/// * `LiquidityAdminCap` - Admin capability for permission control
+fun create_registry(ctx: &mut TxContext): (Registry, LiquidityAdminCap) {
+    let admin_cap = LiquidityAdminCap {
         id: object::new(ctx),
     };
     
@@ -108,7 +108,7 @@ public fun init_for_testing(ctx: &mut TxContext) {
 public fun register_vault<T>(
     registry: &mut Registry,
     vault_id: ID,
-    admin_cap: &AdminCap,
+    admin_cap: &LiquidityAdminCap,
 ) {
     // Verify admin permission
     assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
@@ -195,7 +195,7 @@ public fun get_active_vaults<T>(registry: &Registry): vector<ID> {
 public fun pause_vault<T>(
     registry: &mut Registry,
     vault_id: ID,
-    admin_cap: &AdminCap,
+    admin_cap: &LiquidityAdminCap,
 ) {
     // Verify admin permission
     assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
@@ -231,7 +231,7 @@ public fun pause_vault<T>(
 public fun resume_vault<T>(
     registry: &mut Registry,
     vault_id: ID,
-    admin_cap: &AdminCap,
+    admin_cap: &LiquidityAdminCap,
     set_as_default: bool,
 ) {
     // Verify admin permission
@@ -270,7 +270,7 @@ public fun resume_vault<T>(
 public fun set_default_vault<T>(
     registry: &mut Registry,
     vault_id: ID,
-    admin_cap: &AdminCap,
+    admin_cap: &LiquidityAdminCap,
 ) {
     // Verify admin permission
     assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
@@ -391,7 +391,7 @@ public fun get_admin_cap_id(registry: &Registry): ID {
 /// * `admin_cap` - Admin capability for authorization
 public fun global_emergency_pause_all(
     registry: &mut Registry,
-    admin_cap: &AdminCap,
+    admin_cap: &LiquidityAdminCap,
 ) {
     // Verify admin permission
     assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());
@@ -419,7 +419,7 @@ public fun is_global_emergency_state(registry: &Registry): bool {
 /// * `admin_cap` - Admin capability for authorization
 public fun restore_from_global_emergency(
     registry: &mut Registry,
-    admin_cap: &AdminCap,
+    admin_cap: &LiquidityAdminCap,
 ) {
     // Verify admin permission
     assert!(object::id(admin_cap) == registry.admin_cap_id, errors::unauthorized_access());

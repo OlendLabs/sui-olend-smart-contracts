@@ -7,7 +7,7 @@ use sui::test_scenario::{Self};
 use sui::coin::{Self};
 use sui::sui::SUI;
 
-use olend::liquidity::{Self, Registry, AdminCap};
+use olend::liquidity::{Self, Registry, LiquidityAdminCap};
 use olend::vault::{Self};
 use olend::constants;
 
@@ -33,7 +33,7 @@ fun test_package_borrow_success() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test_scenario::take_shared<Registry>(&scenario);
-        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let admin_cap = test_scenario::take_from_sender<LiquidityAdminCap>(&scenario);
         
         // Create vault
         let mut vault = vault::create_vault<SUI>(
@@ -97,7 +97,7 @@ fun test_package_repay_success() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test_scenario::take_shared<Registry>(&scenario);
-        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let admin_cap = test_scenario::take_from_sender<LiquidityAdminCap>(&scenario);
         
         // Create vault
         let mut vault = vault::create_vault<SUI>(
@@ -162,7 +162,7 @@ fun test_package_full_repay() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test_scenario::take_shared<Registry>(&scenario);
-        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let admin_cap = test_scenario::take_from_sender<LiquidityAdminCap>(&scenario);
         
         // Create vault
         let mut vault = vault::create_vault<SUI>(
@@ -218,7 +218,7 @@ fun test_package_over_repay() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test_scenario::take_shared<Registry>(&scenario);
-        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let admin_cap = test_scenario::take_from_sender<LiquidityAdminCap>(&scenario);
         
         // Create vault
         let mut vault = vault::create_vault<SUI>(
@@ -280,7 +280,7 @@ fun test_package_borrow_zero_amount() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test_scenario::take_shared<Registry>(&scenario);
-        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let admin_cap = test_scenario::take_from_sender<LiquidityAdminCap>(&scenario);
         
         // Create vault
         let mut vault = vault::create_vault<SUI>(
@@ -324,7 +324,7 @@ fun test_package_borrow_insufficient_assets() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test_scenario::take_shared<Registry>(&scenario);
-        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let admin_cap = test_scenario::take_from_sender<LiquidityAdminCap>(&scenario);
         
         // Create vault
         let mut vault = vault::create_vault<SUI>(
@@ -369,7 +369,7 @@ fun test_package_repay_zero_amount() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test_scenario::take_shared<Registry>(&scenario);
-        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let admin_cap = test_scenario::take_from_sender<LiquidityAdminCap>(&scenario);
         
         // Create vault
         let mut vault = vault::create_vault<SUI>(
@@ -407,7 +407,7 @@ fun test_package_multiple_borrow_repay() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test_scenario::take_shared<Registry>(&scenario);
-        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let admin_cap = test_scenario::take_from_sender<LiquidityAdminCap>(&scenario);
         
         // Create vault
         let mut vault = vault::create_vault<SUI>(
@@ -470,7 +470,7 @@ fun test_package_borrow_repay_with_interest() {
     test_scenario::next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test_scenario::take_shared<Registry>(&scenario);
-        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let admin_cap = test_scenario::take_from_sender<LiquidityAdminCap>(&scenario);
         
         // Create vault
         let mut vault = vault::create_vault<SUI>(

@@ -72,7 +72,7 @@ Olend 是一个基于 Sui Network 的去中心化借贷平台，使用 Sui Move 
 
 ### 需求 2 - 账户管理系统
 
-**用户故事：** 作为平台用户，我希望有一个统一的账户系统来管理我的所有头寸、等级和积分信息，并支持子账户管理和额度授权，为后续的借贷操作提供身份验证和权限控制。
+**用户故事：** 作为平台用户，我希望有一个统一的账户系统来管理我的所有头寸、等级和积分信息，为后续的借贷操作提供身份验证和权限控制。
 
 #### 验收标准
 
@@ -98,33 +98,21 @@ Olend 是一个基于 Sui Network 的去中心化借贷平台，使用 Sui Move 
 15. WHEN 验证账户权限 THEN 系统 SHALL 确保 AccountCap 与对应的 Account 匹配
 16. WHEN AccountCap 丢失或损坏 THEN 系统 SHALL 提供安全的账户恢复机制（如果技术上可行）
 
-##### 子账户管理需求
-17. WHEN 用户需要创建子账户 THEN Account SHALL 支持创建多个子账户（SubAccount）
-18. WHEN 创建子账户 THEN 系统 SHALL 为子账户分配唯一ID并建立与主账户的关联关系
-19. WHEN 子账户被创建 THEN 系统 SHALL 为子账户创建对应的 SubAccountCap 权限凭证
-20. WHEN 管理子账户 THEN 主账户 SHALL 能够查看和管理所有子账户的状态和权限
-21. WHEN 子账户操作 THEN 系统 SHALL 通过 SubAccountCap 验证子账户的操作权限
-22. WHEN 子账户创建头寸 THEN 子账户的头寸ID SHALL 同时记录在子账户和主账户的头寸列表中
+##### 跨模块集成需求
+17. WHEN 其他模块需要用户身份验证 THEN Account模块 SHALL 提供统一的身份验证接口
+18. WHEN 其他模块需要用户等级信息 THEN Account模块 SHALL 提供安全的等级查询接口
+19. WHEN 其他模块需要更新用户活动 THEN Account模块 SHALL 提供活动更新接口
+20. WHEN 其他模块需要奖励用户积分 THEN Account模块 SHALL 提供积分增加接口
 
-##### 额度授权管理需求
-23. WHEN 主账户对子账户进行额度授权 THEN 系统 SHALL 记录每个子账户在不同资产上的授权额度
-24. WHEN 设置子账户额度 THEN 主账户 SHALL 能够为子账户设置借贷额度、交易额度等不同类型的额度限制
-25. WHEN 子账户进行操作 THEN 系统 SHALL 验证操作金额不超过主账户设置的授权额度
-26. WHEN 子账户额度不足 THEN 系统 SHALL 阻止子账户的超额操作并提供明确的错误信息
-27. WHEN 主账户修改子账户额度 THEN 系统 SHALL 立即生效并影响子账户后续操作
-28. WHEN 查询子账户额度 THEN 系统 SHALL 提供已使用额度和剩余额度的实时信息
-
-##### 权限层级管理需求
-29. WHEN 定义账户权限 THEN 系统 SHALL 建立主账户 > 子账户的权限层级关系
-30. WHEN 子账户尝试创建子账户 THEN 系统 SHALL 根据权限设置决定是否允许（可配置的层级深度）
-31. WHEN 权限冲突 THEN 系统 SHALL 以主账户的权限设置为准
-32. WHEN 主账户被暂停 THEN 系统 SHALL 同时暂停所有关联的子账户
+##### 升级和版本控制需求
+21. WHEN 系统需要升级 THEN AccountRegistry SHALL 支持通过UpgradeCap进行版本升级
+22. WHEN 系统需要升级 THEN Account对象 SHALL 支持通过UpgradeCap进行版本升级
+23. WHEN 版本不匹配 THEN 系统 SHALL 拒绝操作并要求升级
 
 ##### 数据一致性和安全需求
-33. WHEN 多个子账户同时操作 THEN 系统 SHALL 确保额度检查和扣减的原子性
-34. WHEN 账户数据更新 THEN 系统 SHALL 确保主账户和子账户数据的一致性
-35. WHEN 借贷模块需要用户验证 THEN 账户系统 SHALL 提供统一的身份验证和权限控制接口
-36. WHEN 账户系统与其他模块交互 THEN 系统 SHALL 确保账户数据的隐私性和安全性
+24. WHEN 借贷模块需要用户验证 THEN 账户系统 SHALL 提供统一的身份验证和权限控制接口
+25. WHEN 账户系统与其他模块交互 THEN 系统 SHALL 确保账户数据的隐私性和安全性
+26. WHEN 多个模块同时访问账户 THEN 系统 SHALL 确保数据一致性和操作原子性
 
 ### 需求 3 - 预言机集成系统
 

@@ -57,8 +57,7 @@ const EInsufficientAllowance: u64 = 2003;
 /// Unauthorized operation
 const EUnauthorizedOperation: u64 = 2004;
 
-/// Invalid sub account
-const EInvalidSubAccount: u64 = 2005;
+// Sub-account functionality removed
 
 /// Allowance expired
 const EAllowanceExpired: u64 = 2006;
@@ -72,8 +71,7 @@ const EAccountAlreadyExists: u64 = 2008;
 /// Invalid account status
 const EInvalidAccountStatus: u64 = 2009;
 
-/// Sub account capability mismatch
-const ESubAccountCapMismatch: u64 = 2010;
+// Sub-account functionality removed
 
 /// Position ID not found
 const EPositionIdNotFound: u64 = 2011;
@@ -118,12 +116,12 @@ public fun account_not_found(): u64 { EAccountNotFound }
 public fun account_suspended(): u64 { EAccountSuspended }
 public fun insufficient_allowance(): u64 { EInsufficientAllowance }
 public fun unauthorized_operation(): u64 { EUnauthorizedOperation }
-public fun invalid_sub_account(): u64 { EInvalidSubAccount }
+// Sub-account functionality removed
 public fun allowance_expired(): u64 { EAllowanceExpired }
 public fun account_cap_mismatch(): u64 { EAccountCapMismatch }
 public fun account_already_exists(): u64 { EAccountAlreadyExists }
 public fun invalid_account_status(): u64 { EInvalidAccountStatus }
-public fun sub_account_cap_mismatch(): u64 { ESubAccountCapMismatch }
+// Sub-account functionality removed
 public fun position_id_not_found(): u64 { EPositionIdNotFound }
 public fun invalid_allowance_type(): u64 { EInvalidAllowanceType }
 

@@ -24,7 +24,7 @@ fun test_init_for_testing() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Verify initialization
     assert!(liquidity::get_version(&registry) == constants::current_version(), 0);
@@ -56,7 +56,7 @@ fun test_init_for_testing_consistency() {
     
     // Get shared Registry and AdminCap
     let registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Verify it works the same as the main create_test_registry function
     assert!(liquidity::get_version(&registry) == constants::current_version(), 0);

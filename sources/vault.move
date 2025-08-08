@@ -9,7 +9,7 @@ use sui::balance::{Self, Balance, Supply};
 use olend::constants;
 use olend::errors;
 use olend::utils;
-use olend::liquidity::{Self, AdminCap};
+use olend::liquidity::{Self, LiquidityAdminCap};
 use olend::ytoken::{Self, YToken};
 
 // ===== Struct Definitions =====
@@ -90,7 +90,7 @@ public struct VaultConfig has store {
 /// * `Vault<T>` - Newly created vault
 public fun create_vault<T>(
     registry: &mut liquidity::Registry,
-    admin_cap: &AdminCap,
+    admin_cap: &LiquidityAdminCap,
     max_daily_withdrawal: u64,
     ctx: &mut tx_context::TxContext
 ): Vault<T> {
@@ -410,7 +410,7 @@ public fun convert_to_assets<T>(vault: &Vault<T>, shares: u64): u64 {
 /// * `_admin_cap` - Admin capability for authorization
 public fun pause_vault_operations<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     // Note: We can't verify admin_cap against vault directly since vault doesn't store admin_cap_id
     // This should be called through Registry functions that verify permissions
@@ -429,7 +429,7 @@ public fun pause_vault_operations<T>(
 /// * `_admin_cap` - Admin capability for authorization
 public fun resume_vault_operations<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     // Note: We can't verify admin_cap against vault directly since vault doesn't store admin_cap_id
     // This should be called through Registry functions that verify permissions
@@ -447,7 +447,7 @@ public fun resume_vault_operations<T>(
 /// * `_admin_cap` - Admin capability for authorization
 public fun set_deposits_only<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     vault.status = VaultStatus::DepositsOnly;
 }
@@ -462,7 +462,7 @@ public fun set_deposits_only<T>(
 /// * `_admin_cap` - Admin capability for authorization
 public fun set_withdrawals_only<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     vault.status = VaultStatus::WithdrawalsOnly;
 }
@@ -477,7 +477,7 @@ public fun set_withdrawals_only<T>(
 /// * `_admin_cap` - Admin capability for authorization
 public fun deactivate_vault<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     vault.status = VaultStatus::Inactive;
 }
@@ -496,7 +496,7 @@ public fun deactivate_vault<T>(
 /// * `withdrawal_fee_bps` - New withdrawal fee in basis points
 public fun update_vault_config<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &AdminCap,
+    _admin_cap: &LiquidityAdminCap,
     min_deposit: u64,
     min_withdrawal: u64,
     deposit_fee_bps: u64,
@@ -728,7 +728,7 @@ public fun set_vault_version_for_test<T>(vault: &mut Vault<T>, version: u64) {
 /// * `admin_cap` - Admin capability for authorization
 public fun emergency_pause<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     // Emergency pause bypasses version checks for security reasons
     vault.status = VaultStatus::Inactive;
@@ -746,7 +746,7 @@ public fun emergency_pause<T>(
 /// * `admin_cap` - Admin capability for authorization
 public fun global_emergency_pause<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     // Set vault to inactive and reset daily limits for security
     vault.status = VaultStatus::Inactive;
@@ -796,7 +796,7 @@ public fun is_global_emergency_paused<T>(vault: &Vault<T>): bool {
 public fun update_daily_limit<T>(
     vault: &mut Vault<T>,
     new_limit: u64,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     assert!(vault.version == constants::current_version(), errors::version_mismatch());
     assert!(new_limit > 0, errors::invalid_input());
@@ -843,7 +843,7 @@ public fun get_vault_statistics<T>(vault: &Vault<T>): (u64, u64, u64, u64, u64) 
 /// * `admin_cap` - Admin capability for authorization
 public fun reset_daily_limit<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     assert!(vault.version == constants::current_version(), errors::version_mismatch());
     
@@ -863,7 +863,7 @@ public fun reset_daily_limit<T>(
 public fun force_update_day_counter<T>(
     vault: &mut Vault<T>,
     new_day: u64,
-    _admin_cap: &AdminCap
+    _admin_cap: &LiquidityAdminCap
 ) {
     assert!(vault.version == constants::current_version(), errors::version_mismatch());
     

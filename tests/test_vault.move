@@ -30,7 +30,7 @@ fun test_create_vault() {
     
     // Get shared Registry and AdminCap
     let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     
     // Create a vault
     let max_daily_withdrawal = 1000000;
@@ -260,7 +260,7 @@ fun test_vault_status_management() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Test pause functionality
@@ -307,7 +307,7 @@ fun test_vault_config_update() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Update vault configuration
@@ -412,7 +412,7 @@ fun test_paused_vault_deposit_fails() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Pause vault
@@ -794,7 +794,7 @@ fun test_all_status_transitions() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Test initial active state
@@ -845,7 +845,7 @@ fun test_operations_in_different_states() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Initial deposit in active state
@@ -888,7 +888,7 @@ fun test_emergency_pause() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Initial state should be active
@@ -920,7 +920,7 @@ fun test_emergency_pause_blocks_operations() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Emergency pause
@@ -946,7 +946,7 @@ fun test_update_daily_limit() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Check initial limit
@@ -1027,7 +1027,7 @@ fun test_invalid_daily_limit_update() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Try to set zero limit (should fail)
@@ -1050,7 +1050,7 @@ fun test_enhanced_emergency_pause() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Verify vault is initially active
@@ -1081,7 +1081,7 @@ fun test_global_emergency_pause() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Verify vault is initially active
@@ -1113,7 +1113,7 @@ fun test_daily_limit_management() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Deposit some assets first
@@ -1161,7 +1161,7 @@ fun test_enhanced_update_daily_limit() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Verify initial daily limit
@@ -1195,7 +1195,7 @@ fun test_force_update_day_counter() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Deposit and withdraw to set some daily usage
@@ -1237,7 +1237,7 @@ fun test_security_status_check() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Test initial security status
@@ -1292,7 +1292,7 @@ fun test_emergency_pause_blocks_deposit() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Emergency pause the vault
@@ -1319,7 +1319,7 @@ fun test_emergency_pause_blocks_withdrawal() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Deposit first
@@ -1349,7 +1349,7 @@ fun test_emergency_pause_blocks_borrow() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Deposit first
@@ -1380,7 +1380,7 @@ fun test_enhanced_invalid_daily_limit_update() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Try to set zero daily limit (should fail)
@@ -1402,7 +1402,7 @@ fun test_daily_limit_exceeds_maximum() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Try to set daily limit above maximum (should fail)
@@ -1425,7 +1425,7 @@ fun test_version_mismatch_in_security_functions() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Set vault to an older version
@@ -1449,7 +1449,7 @@ fun test_comprehensive_daily_limit_workflow() {
     liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
     test_scenario::next_tx(&mut scenario, ADMIN);
     
-    let admin_cap = test_scenario::take_from_sender<liquidity::AdminCap>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
     let daily_limit = 1000;
     let mut vault = vault::create_vault_for_test<TestCoin>(daily_limit, test_scenario::ctx(&mut scenario));
     
