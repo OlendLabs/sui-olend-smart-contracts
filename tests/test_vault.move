@@ -70,6 +70,103 @@ fun test_create_vault() {
     test_scenario::end(scenario);
 }
 
+/// Test creating and sharing a vault as a Shared Object
+#[test]
+fun test_create_and_share_vault() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize registry
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
+    
+    // Create and share a vault
+    let max_daily_withdrawal = 1000000;
+    let vault_id = vault::create_and_share_vault<TestCoin>(
+        &mut registry,
+        &admin_cap,
+        max_daily_withdrawal,
+        test_scenario::ctx(&mut scenario)
+    );
+    
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    
+    // Move to next transaction to access the shared vault
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    // Take the shared vault
+    let mut vault = test_scenario::take_shared<vault::Vault<TestCoin>>(&scenario);
+    
+    // Verify the vault ID matches
+    assert!(object::id(&vault) == vault_id, 0);
+    
+    // Verify initial vault state
+    assert!(vault::total_assets(&vault) == 0, 1);
+    assert!(vault::total_supply(&vault) == 0, 2);
+    assert!(vault::get_borrowed_assets(&vault) == 0, 3);
+    assert!(vault::get_available_assets(&vault) == 0, 4);
+    
+    // Verify vault status
+    assert!(vault::is_vault_active(&vault), 5);
+    assert!(!vault::is_vault_paused(&vault), 6);
+    
+    // Test that we can use the shared vault for operations
+    let deposit_amount = 1000;
+    let deposit_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let ytoken_coin = vault::deposit(&mut vault, deposit_coin, test_scenario::ctx(&mut scenario));
+    
+    // Verify deposit worked
+    assert!(vault::total_assets(&vault) == deposit_amount, 7);
+    assert!(vault::get_ytoken_value(&ytoken_coin) == deposit_amount, 8);
+    
+    // Clean up
+    coin::burn_for_testing(ytoken_coin);
+    test_scenario::return_shared(vault);
+    test_scenario::end(scenario);
+}
+
+/// Test vault consistency validation
+#[test]
+fun test_vault_consistency_validation() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Create vault for testing
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
+    
+    // Initially, vault should be consistent
+    assert!(vault::validate_vault_consistency(&vault, test_scenario::ctx(&mut scenario)), 0);
+    
+    // Add some assets
+    let deposit_amount = 1000;
+    let deposit_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let ytoken_coin = vault::deposit(&mut vault, deposit_coin, test_scenario::ctx(&mut scenario));
+    
+    // Should still be consistent after deposit
+    assert!(vault::validate_vault_consistency(&vault, test_scenario::ctx(&mut scenario)), 1);
+    
+    // Borrow some assets
+    let borrow_amount = 500;
+    let borrowed_coin = vault::borrow(&mut vault, borrow_amount, test_scenario::ctx(&mut scenario));
+    
+    // Should still be consistent after borrowing
+    assert!(vault::validate_vault_consistency(&vault, test_scenario::ctx(&mut scenario)), 2);
+    
+    // Repay the borrowed assets
+    vault::repay(&mut vault, borrowed_coin);
+    
+    // Should still be consistent after repayment
+    assert!(vault::validate_vault_consistency(&vault, test_scenario::ctx(&mut scenario)), 3);
+    
+    // Clean up
+    coin::burn_for_testing(ytoken_coin);
+    test_utils::destroy(vault);
+    test_scenario::end(scenario);
+}
+
 /// Test deposit functionality (ERC-4626 compatibility)
 #[test]
 fun test_deposit() {

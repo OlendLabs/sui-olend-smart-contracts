@@ -16,7 +16,8 @@ use olend::ytoken::{Self, YToken};
 
 /// Unified liquidity vault, compatible with ERC-4626 standard
 /// Manages assets and shares for a specific asset type
-public struct Vault<phantom T> has key, store {
+/// Now as Shared Object for unified liquidity management
+public struct Vault<phantom T> has key {
     id: UID,
     /// Protocol version for access control
     version: u64,
@@ -123,6 +124,35 @@ public fun create_vault<T>(
     liquidity::register_vault<T>(registry, vault_id, admin_cap);
     
     vault
+}
+
+/// Creates a new Vault for the specified asset type and shares it as a Shared Object
+/// This is the recommended way to create Vaults for production use
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `registry` - Mutable reference to the registry
+/// * `admin_cap` - Admin capability for authorization
+/// * `max_daily_withdrawal` - Maximum daily withdrawal limit
+/// * `ctx` - Transaction context
+/// 
+/// # Returns
+/// * `ID` - ID of the newly created and shared vault
+public fun create_and_share_vault<T>(
+    registry: &mut liquidity::Registry,
+    admin_cap: &LiquidityAdminCap,
+    max_daily_withdrawal: u64,
+    ctx: &mut tx_context::TxContext
+): ID {
+    let vault = create_vault<T>(registry, admin_cap, max_daily_withdrawal, ctx);
+    let vault_id = object::id(&vault);
+    
+    // Share the vault as a Shared Object
+    transfer::share_object(vault);
+    
+    vault_id
 }
 
 // ===== ERC-4626 Core Functions =====
@@ -928,6 +958,8 @@ public fun get_remaining_daily_limit<T>(
     }
 }
 
+
+
 /// Comprehensive security status check
 /// Returns detailed security information about the vault
 /// 
@@ -1118,8 +1150,14 @@ public fun validate_vault_consistency<T>(
     let total_assets_balance = balance::value(&vault.total_assets);
     let total_supply = balance::supply_value(&vault.ytoken_supply);
     
-    // Borrowed assets should not exceed total assets
-    if (vault.borrowed_assets > total_assets_balance + vault.borrowed_assets) {
+    // Borrowed assets should not exceed total assets (including borrowed assets)
+    let total_assets_value = total_assets(vault);
+    if (vault.borrowed_assets > total_assets_value) {
+        return false
+    };
+    
+    // Available assets + borrowed assets should equal total assets
+    if (total_assets_balance + vault.borrowed_assets != total_assets_value) {
         return false
     };
     
