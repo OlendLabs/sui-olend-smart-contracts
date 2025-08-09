@@ -52,85 +52,85 @@ const EConcurrentAccessViolation: u64 = 1015;
 /// Atomic operation failed
 const EAtomicOperationFailed: u64 = 1016;
 
-// ===== Oracle Module Error Codes (2000-2099) =====
-
-/// Price feed not configured for asset type
-const EPriceFeedNotFound: u64 = 2001;
-
-/// Price data is stale (too old)
-const EPriceDataStale: u64 = 2002;
-
-/// Price confidence too low
-const EPriceConfidenceTooLow: u64 = 2003;
-
-/// Price manipulation detected
-const EPriceManipulationDetected: u64 = 2004;
-
-/// Invalid price feed ID
-const EInvalidPriceFeedId: u64 = 2005;
-
-/// Oracle in emergency mode
-const EOracleEmergencyMode: u64 = 2006;
-
-/// Price validation failed
-const EPriceValidationFailed: u64 = 2007;
-
-/// Unauthorized oracle access
-const EUnauthorizedOracleAccess: u64 = 2008;
-
-/// Invalid oracle configuration
-const EInvalidOracleConfig: u64 = 2009;
-
-/// Price cache miss
-const EPriceCacheMiss: u64 = 2010;
-
-// ===== Account Module Error Codes (2100-2999) =====
+// ===== Account Module Error Codes (2000-2099) =====
 
 /// Account not found
-const EAccountNotFound: u64 = 2101;
+const EAccountNotFound: u64 = 2001;
 
 /// Account suspended
-const EAccountSuspended: u64 = 2102;
+const EAccountSuspended: u64 = 2002;
 
 /// Insufficient allowance
-const EInsufficientAllowance: u64 = 2103;
+const EInsufficientAllowance: u64 = 2003;
 
 /// Unauthorized operation
-const EUnauthorizedOperation: u64 = 2104;
+const EUnauthorizedOperation: u64 = 2004;
 
 // Sub-account functionality removed
 
 /// Allowance expired
-const EAllowanceExpired: u64 = 2106;
+const EAllowanceExpired: u64 = 2006;
 
 /// Account capability mismatch
-const EAccountCapMismatch: u64 = 2107;
+const EAccountCapMismatch: u64 = 2007;
 
 /// Account already exists
-const EAccountAlreadyExists: u64 = 2108;
+const EAccountAlreadyExists: u64 = 2008;
 
 /// Invalid account status
-const EInvalidAccountStatus: u64 = 2109;
+const EInvalidAccountStatus: u64 = 2009;
 
 // Sub-account functionality removed
 
 /// Position ID not found
-const EPositionIdNotFound: u64 = 2111;
+const EPositionIdNotFound: u64 = 2011;
 
 /// Invalid allowance type
-const EInvalidAllowanceType: u64 = 2112;
+const EInvalidAllowanceType: u64 = 2012;
 
 /// Rate limit exceeded
-const ERateLimitExceeded: u64 = 2113;
+const ERateLimitExceeded: u64 = 2013;
 
 /// Replay attack detected
-const EReplayAttackDetected: u64 = 2114;
+const EReplayAttackDetected: u64 = 2014;
 
 /// Suspicious activity detected
-const ESuspiciousActivityDetected: u64 = 2115;
+const ESuspiciousActivityDetected: u64 = 2015;
 
 /// Account temporarily restricted
-const EAccountRestricted: u64 = 2116;
+const EAccountRestricted: u64 = 2016;
+
+// ===== Oracle Module Error Codes (2050-2099) =====
+
+/// Price feed not configured for asset type
+const EPriceFeedNotFound: u64 = 2050;
+
+/// Price data is stale (too old)
+const EPriceDataStale: u64 = 2051;
+
+/// Price confidence too low
+const EPriceConfidenceTooLow: u64 = 2052;
+
+/// Price manipulation detected
+const EPriceManipulationDetected: u64 = 2053;
+
+/// Invalid price feed ID
+const EInvalidPriceFeedId: u64 = 2054;
+
+/// Oracle in emergency mode
+const EOracleEmergencyMode: u64 = 2055;
+
+/// Price validation failed
+const EPriceValidationFailed: u64 = 2056;
+
+/// Unauthorized oracle access
+const EUnauthorizedOracleAccess: u64 = 2057;
+
+/// Invalid oracle configuration
+const EInvalidOracleConfig: u64 = 2058;
+
+/// Price cache miss
+const EPriceCacheMiss: u64 = 2059;
 
 // ===== General Error Codes (9000-9999) =====
 
@@ -167,18 +167,6 @@ public fun data_inconsistency(): u64 { EDataInconsistency }
 public fun concurrent_access_violation(): u64 { EConcurrentAccessViolation }
 public fun atomic_operation_failed(): u64 { EAtomicOperationFailed }
 
-/// Get Oracle-related error codes
-public fun price_feed_not_found(): u64 { EPriceFeedNotFound }
-public fun price_data_stale(): u64 { EPriceDataStale }
-public fun price_confidence_too_low(): u64 { EPriceConfidenceTooLow }
-public fun price_manipulation_detected(): u64 { EPriceManipulationDetected }
-public fun invalid_price_feed_id(): u64 { EInvalidPriceFeedId }
-public fun oracle_emergency_mode(): u64 { EOracleEmergencyMode }
-public fun price_validation_failed(): u64 { EPriceValidationFailed }
-public fun unauthorized_oracle_access(): u64 { EUnauthorizedOracleAccess }
-public fun invalid_oracle_config(): u64 { EInvalidOracleConfig }
-public fun price_cache_miss(): u64 { EPriceCacheMiss }
-
 /// Get Account-related error codes
 public fun account_not_found(): u64 { EAccountNotFound }
 public fun account_suspended(): u64 { EAccountSuspended }
@@ -196,6 +184,18 @@ public fun rate_limit_exceeded(): u64 { ERateLimitExceeded }
 public fun replay_attack_detected(): u64 { EReplayAttackDetected }
 public fun suspicious_activity_detected(): u64 { ESuspiciousActivityDetected }
 public fun account_restricted(): u64 { EAccountRestricted }
+
+/// Get Oracle-related error codes
+public fun price_feed_not_found(): u64 { EPriceFeedNotFound }
+public fun price_data_stale(): u64 { EPriceDataStale }
+public fun price_confidence_too_low(): u64 { EPriceConfidenceTooLow }
+public fun price_manipulation_detected(): u64 { EPriceManipulationDetected }
+public fun invalid_price_feed_id(): u64 { EInvalidPriceFeedId }
+public fun oracle_emergency_mode(): u64 { EOracleEmergencyMode }
+public fun price_validation_failed(): u64 { EPriceValidationFailed }
+public fun unauthorized_oracle_access(): u64 { EUnauthorizedOracleAccess }
+public fun invalid_oracle_config(): u64 { EInvalidOracleConfig }
+public fun price_cache_miss(): u64 { EPriceCacheMiss }
 
 /// Get general error codes
 public fun invalid_input(): u64 { EInvalidInput }

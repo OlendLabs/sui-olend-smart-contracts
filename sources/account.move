@@ -4,7 +4,6 @@ module olend::account;
 
 use sui::table::{Self, Table};
 
-
 use olend::constants;
 use olend::errors;
 

@@ -83,34 +83,34 @@ public struct PriceValidationErrorEvent has copy, drop {
 // ===== Error Constants =====
 
 /// Price feed not configured for asset type
-const EPriceFeedNotFound: u64 = 2001;
+const EPriceFeedNotFound: u64 = 2050;
 
 /// Price data is stale (too old)
-const EPriceDataStale: u64 = 2002;
+const EPriceDataStale: u64 = 2051;
 
 /// Price confidence too low
-const EPriceConfidenceTooLow: u64 = 2003;
+const EPriceConfidenceTooLow: u64 = 2052;
 
 /// Price manipulation detected
-const EPriceManipulationDetected: u64 = 2004;
+const EPriceManipulationDetected: u64 = 2053;
 
 /// Invalid price feed ID
-const EInvalidPriceFeedId: u64 = 2005;
+const EInvalidPriceFeedId: u64 = 2054;
 
 /// Oracle in emergency mode
-const EOracleEmergencyMode: u64 = 2006;
+const EOracleEmergencyMode: u64 = 2055;
 
 /// Price validation failed
-const EPriceValidationFailed: u64 = 2007;
+const EPriceValidationFailed: u64 = 2056;
 
 /// Unauthorized oracle access
-const EUnauthorizedOracleAccess: u64 = 2008;
+const EUnauthorizedOracleAccess: u64 = 2057;
 
 /// Invalid oracle configuration
-const EInvalidOracleConfig: u64 = 2009;
+const EInvalidOracleConfig: u64 = 2058;
 
 /// Price cache miss
-const EPriceCacheMiss: u64 = 2010;
+const EPriceCacheMiss: u64 = 2059;
 
 // ===== Public Functions =====
 
