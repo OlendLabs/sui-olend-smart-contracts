@@ -16,7 +16,8 @@ use olend::ytoken::{Self, YToken};
 
 /// Unified liquidity vault, compatible with ERC-4626 standard
 /// Manages assets and shares for a specific asset type
-public struct Vault<phantom T> has key, store {
+/// Now as Shared Object for unified liquidity management
+public struct Vault<phantom T> has key {
     id: UID,
     /// Protocol version for access control
     version: u64,
@@ -125,6 +126,35 @@ public fun create_vault<T>(
     vault
 }
 
+/// Creates a new Vault for the specified asset type and shares it as a Shared Object
+/// This is the recommended way to create Vaults for production use
+/// 
+/// # Type Parameters
+/// * `T` - Asset type
+/// 
+/// # Arguments
+/// * `registry` - Mutable reference to the registry
+/// * `admin_cap` - Admin capability for authorization
+/// * `max_daily_withdrawal` - Maximum daily withdrawal limit
+/// * `ctx` - Transaction context
+/// 
+/// # Returns
+/// * `ID` - ID of the newly created and shared vault
+public fun create_and_share_vault<T>(
+    registry: &mut liquidity::Registry,
+    admin_cap: &LiquidityAdminCap,
+    max_daily_withdrawal: u64,
+    ctx: &mut tx_context::TxContext
+): ID {
+    let vault = create_vault<T>(registry, admin_cap, max_daily_withdrawal, ctx);
+    let vault_id = object::id(&vault);
+    
+    // Share the vault as a Shared Object
+    transfer::share_object(vault);
+    
+    vault_id
+}
+
 // ===== ERC-4626 Core Functions =====
 
 /// Deposits assets into the vault and returns YToken shares
@@ -162,15 +192,19 @@ public fun deposit<T>(
     assert!(asset_amount > 0, errors::zero_assets());
     assert!(asset_amount >= vault.config.min_deposit, errors::invalid_assets());
     
-    // Calculate shares to mint
-    let shares_to_mint = convert_to_shares(vault, asset_amount);
+    // Apply deposit fee
+    let fee_amount = (asset_amount * vault.config.deposit_fee_bps) / 10000;
+    let net_deposit_amount = asset_amount - fee_amount;
+    
+    // Calculate shares to mint based on net amount (after fee)
+    let shares_to_mint = convert_to_shares(vault, net_deposit_amount);
     assert!(shares_to_mint > 0, errors::zero_shares());
     
-    // Add assets to vault
+    // Add all assets to vault (including fee)
     let asset_balance = coin::into_balance(assets);
     balance::join(&mut vault.total_assets, asset_balance);
     
-    // Mint YToken shares using Supply
+    // Mint YToken shares using Supply (based on net amount)
     let ytoken_balance = balance::increase_supply(&mut vault.ytoken_supply, shares_to_mint);
     coin::from_balance(ytoken_balance, ctx)
 }
@@ -207,12 +241,17 @@ public fun withdraw<T>(
     let shares_to_burn = coin::value(&ytoken_coin);
     assert!(shares_to_burn > 0, errors::zero_shares());
     
-    // Calculate assets to withdraw
-    let assets_to_withdraw = convert_to_assets(vault, shares_to_burn);
-    assert!(assets_to_withdraw > 0, errors::zero_assets());
-    assert!(assets_to_withdraw >= vault.config.min_withdrawal, errors::invalid_assets());
+    // Calculate gross assets to withdraw (before fee)
+    let gross_assets_to_withdraw = convert_to_assets(vault, shares_to_burn);
+    assert!(gross_assets_to_withdraw > 0, errors::zero_assets());
     
-    // Check daily withdrawal limit
+    // Apply withdrawal fee
+    let fee_amount = (gross_assets_to_withdraw * vault.config.withdrawal_fee_bps) / 10000;
+    let net_assets_to_withdraw = gross_assets_to_withdraw - fee_amount;
+    
+    assert!(net_assets_to_withdraw >= vault.config.min_withdrawal, errors::invalid_assets());
+    
+    // Check daily withdrawal limit (based on gross amount)
     let current_day = utils::get_current_day(ctx);
     if (current_day != vault.daily_limit.current_day) {
         // Reset daily limit for new day
@@ -221,24 +260,29 @@ public fun withdraw<T>(
     };
     
     assert!(
-        vault.daily_limit.withdrawn_today + assets_to_withdraw <= vault.daily_limit.max_daily_withdrawal,
+        vault.daily_limit.withdrawn_today + gross_assets_to_withdraw <= vault.daily_limit.max_daily_withdrawal,
         errors::daily_limit_exceeded()
     );
     
     // Check sufficient assets in vault
     let available_assets = balance::value(&vault.total_assets);
-    assert!(available_assets >= assets_to_withdraw, errors::insufficient_assets());
+    assert!(available_assets >= gross_assets_to_withdraw, errors::insufficient_assets());
     
-    // Update daily withdrawal tracking
-    vault.daily_limit.withdrawn_today = vault.daily_limit.withdrawn_today + assets_to_withdraw;
+    // Update daily withdrawal tracking (based on gross amount)
+    vault.daily_limit.withdrawn_today = vault.daily_limit.withdrawn_today + gross_assets_to_withdraw;
     
     // Burn YToken shares
     let ytoken_balance = coin::into_balance(ytoken_coin);
     balance::decrease_supply(&mut vault.ytoken_supply, ytoken_balance);
     
-    // Withdraw assets from vault
-    let withdrawn_balance = balance::split(&mut vault.total_assets, assets_to_withdraw);
-    coin::from_balance(withdrawn_balance, ctx)
+    // Withdraw gross amount from vault but return net amount to user
+    let mut withdrawn_balance = balance::split(&mut vault.total_assets, gross_assets_to_withdraw);
+    
+    // Split the withdrawn balance: fee stays in vault, net amount goes to user
+    let fee_balance = balance::split(&mut withdrawn_balance, fee_amount);
+    balance::join(&mut vault.total_assets, fee_balance); // Fee stays in vault
+    
+    coin::from_balance(withdrawn_balance, ctx) // User gets net amount
 }
 
 // ===== Package-Level Functions =====
@@ -399,112 +443,97 @@ public fun convert_to_assets<T>(vault: &Vault<T>, shares: u64): u64 {
 
 // ===== Vault Status Management Functions =====
 
-/// Pauses the vault (admin only)
+/// Pauses the vault (package-level access only)
 /// Stops all deposits and withdrawals
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
 /// 
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
-/// * `_admin_cap` - Admin capability for authorization
-public fun pause_vault_operations<T>(
-    vault: &mut Vault<T>,
-    _admin_cap: &LiquidityAdminCap
+public(package) fun pause_vault_operations<T>(
+    vault: &mut Vault<T>
 ) {
-    // Note: We can't verify admin_cap against vault directly since vault doesn't store admin_cap_id
-    // This should be called through Registry functions that verify permissions
-    
     vault.status = VaultStatus::Paused;
 }
 
-/// Resumes the vault (admin only)
+/// Resumes the vault (package-level access only)
 /// Allows deposits and withdrawals
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
 /// 
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
-/// * `_admin_cap` - Admin capability for authorization
-public fun resume_vault_operations<T>(
-    vault: &mut Vault<T>,
-    _admin_cap: &LiquidityAdminCap
+public(package) fun resume_vault_operations<T>(
+    vault: &mut Vault<T>
 ) {
-    // Note: We can't verify admin_cap against vault directly since vault doesn't store admin_cap_id
-    // This should be called through Registry functions that verify permissions
-    
     vault.status = VaultStatus::Active;
 }
 
-/// Sets vault to deposits only mode (admin only)
+/// Sets vault to deposits only mode (package-level access only)
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
 /// 
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
-/// * `_admin_cap` - Admin capability for authorization
-public fun set_deposits_only<T>(
-    vault: &mut Vault<T>,
-    _admin_cap: &LiquidityAdminCap
+public(package) fun set_deposits_only<T>(
+    vault: &mut Vault<T>
 ) {
     vault.status = VaultStatus::DepositsOnly;
 }
 
-/// Sets vault to withdrawals only mode (admin only)
+/// Sets vault to withdrawals only mode (package-level access only)
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
 /// 
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
-/// * `_admin_cap` - Admin capability for authorization
-public fun set_withdrawals_only<T>(
-    vault: &mut Vault<T>,
-    _admin_cap: &LiquidityAdminCap
+public(package) fun set_withdrawals_only<T>(
+    vault: &mut Vault<T>
 ) {
     vault.status = VaultStatus::WithdrawalsOnly;
 }
 
-/// Deactivates the vault (admin only)
+/// Deactivates the vault (package-level access only)
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
 /// 
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
-/// * `_admin_cap` - Admin capability for authorization
-public fun deactivate_vault<T>(
-    vault: &mut Vault<T>,
-    _admin_cap: &LiquidityAdminCap
+public(package) fun deactivate_vault<T>(
+    vault: &mut Vault<T>
 ) {
     vault.status = VaultStatus::Inactive;
 }
 
-/// Updates vault configuration (admin only)
+/// Updates vault configuration (package-level access only)
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
 /// 
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
-/// * `_admin_cap` - Admin capability for authorization
 /// * `min_deposit` - New minimum deposit amount
 /// * `min_withdrawal` - New minimum withdrawal amount
 /// * `deposit_fee_bps` - New deposit fee in basis points
 /// * `withdrawal_fee_bps` - New withdrawal fee in basis points
-public fun update_vault_config<T>(
+public(package) fun update_vault_config<T>(
     vault: &mut Vault<T>,
-    _admin_cap: &LiquidityAdminCap,
     min_deposit: u64,
     min_withdrawal: u64,
     deposit_fee_bps: u64,
     withdrawal_fee_bps: u64
 ) {
-    // Note: We can't verify admin_cap against vault directly since vault doesn't store admin_cap_id
-    // This should be called through Registry functions that verify permissions
-    
     // Validate configuration parameters
     assert!(min_deposit > 0, errors::invalid_vault_config());
     assert!(min_withdrawal > 0, errors::invalid_vault_config());
@@ -716,37 +745,35 @@ public fun set_vault_version_for_test<T>(vault: &mut Vault<T>, version: u64) {
 
 // ===== Emergency and Security Functions =====
 
-/// Emergency pause all vault operations
+/// Emergency pause all vault operations (package-level access only)
 /// More restrictive than regular pause - blocks all operations including admin functions
 /// This is the most severe security measure that completely disables the vault
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
 /// 
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
-/// * `admin_cap` - Admin capability for authorization
-public fun emergency_pause<T>(
-    vault: &mut Vault<T>,
-    _admin_cap: &LiquidityAdminCap
+public(package) fun emergency_pause<T>(
+    vault: &mut Vault<T>
 ) {
     // Emergency pause bypasses version checks for security reasons
     vault.status = VaultStatus::Inactive;
 }
 
-/// Global emergency pause for all operations
+/// Global emergency pause for all operations (package-level access only)
 /// Even more restrictive than emergency_pause - also prevents admin operations
 /// Should only be used in critical security situations
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
 /// 
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
-/// * `admin_cap` - Admin capability for authorization
-public fun global_emergency_pause<T>(
-    vault: &mut Vault<T>,
-    _admin_cap: &LiquidityAdminCap
+public(package) fun global_emergency_pause<T>(
+    vault: &mut Vault<T>
 ) {
     // Set vault to inactive and reset daily limits for security
     vault.status = VaultStatus::Inactive;
@@ -783,8 +810,9 @@ public fun is_global_emergency_paused<T>(vault: &Vault<T>): bool {
     vault.daily_limit.withdrawn_today >= vault.daily_limit.max_daily_withdrawal
 }
 
-/// Update daily withdrawal limit
+/// Update daily withdrawal limit (package-level access only)
 /// Allows dynamic adjustment of withdrawal limits
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
@@ -792,11 +820,9 @@ public fun is_global_emergency_paused<T>(vault: &Vault<T>): bool {
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
 /// * `new_limit` - New daily withdrawal limit
-/// * `admin_cap` - Admin capability for authorization
-public fun update_daily_limit<T>(
+public(package) fun update_daily_limit<T>(
     vault: &mut Vault<T>,
-    new_limit: u64,
-    _admin_cap: &LiquidityAdminCap
+    new_limit: u64
 ) {
     assert!(vault.version == constants::current_version(), errors::version_mismatch());
     assert!(new_limit > 0, errors::invalid_input());
@@ -832,26 +858,26 @@ public fun get_vault_statistics<T>(vault: &Vault<T>): (u64, u64, u64, u64, u64) 
     (total_assets, total_supply, borrowed_assets, available_assets, utilization_rate_bps)
 }
 
-/// Reset daily withdrawal limit (admin only)
+/// Reset daily withdrawal limit (package-level access only)
 /// Allows manual reset of daily limits in case of emergency or system issues
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
 /// 
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
-/// * `admin_cap` - Admin capability for authorization
-public fun reset_daily_limit<T>(
-    vault: &mut Vault<T>,
-    _admin_cap: &LiquidityAdminCap
+public(package) fun reset_daily_limit<T>(
+    vault: &mut Vault<T>
 ) {
     assert!(vault.version == constants::current_version(), errors::version_mismatch());
     
     vault.daily_limit.withdrawn_today = 0;
 }
 
-/// Force update daily limit day counter (admin only)
+/// Force update daily limit day counter (package-level access only)
 /// Allows manual day counter update for testing or emergency situations
+/// Should be called through Registry functions that verify permissions
 /// 
 /// # Type Parameters
 /// * `T` - Asset type
@@ -859,11 +885,9 @@ public fun reset_daily_limit<T>(
 /// # Arguments
 /// * `vault` - Mutable reference to the vault
 /// * `new_day` - New day counter value
-/// * `admin_cap` - Admin capability for authorization
-public fun force_update_day_counter<T>(
+public(package) fun force_update_day_counter<T>(
     vault: &mut Vault<T>,
-    new_day: u64,
-    _admin_cap: &LiquidityAdminCap
+    new_day: u64
 ) {
     assert!(vault.version == constants::current_version(), errors::version_mismatch());
     
@@ -927,6 +951,8 @@ public fun get_remaining_daily_limit<T>(
         }
     }
 }
+
+
 
 /// Comprehensive security status check
 /// Returns detailed security information about the vault
@@ -1118,8 +1144,14 @@ public fun validate_vault_consistency<T>(
     let total_assets_balance = balance::value(&vault.total_assets);
     let total_supply = balance::supply_value(&vault.ytoken_supply);
     
-    // Borrowed assets should not exceed total assets
-    if (vault.borrowed_assets > total_assets_balance + vault.borrowed_assets) {
+    // Borrowed assets should not exceed total assets (including borrowed assets)
+    let total_assets_value = total_assets(vault);
+    if (vault.borrowed_assets > total_assets_value) {
+        return false
+    };
+    
+    // Available assets + borrowed assets should equal total assets
+    if (total_assets_balance + vault.borrowed_assets != total_assets_value) {
         return false
     };
     
@@ -1284,4 +1316,111 @@ public fun validate_batch_operations<T>(
     };
     
     true
+}
+
+// ===== Test Wrapper Functions =====
+
+#[test_only]
+/// Test wrapper for pause_vault_operations
+public fun pause_vault_operations_for_test<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &LiquidityAdminCap
+) {
+    pause_vault_operations(vault);
+}
+
+#[test_only]
+/// Test wrapper for resume_vault_operations
+public fun resume_vault_operations_for_test<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &LiquidityAdminCap
+) {
+    resume_vault_operations(vault);
+}
+
+#[test_only]
+/// Test wrapper for set_deposits_only
+public fun set_deposits_only_for_test<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &LiquidityAdminCap
+) {
+    set_deposits_only(vault);
+}
+
+#[test_only]
+/// Test wrapper for set_withdrawals_only
+public fun set_withdrawals_only_for_test<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &LiquidityAdminCap
+) {
+    set_withdrawals_only(vault);
+}
+
+#[test_only]
+/// Test wrapper for deactivate_vault
+public fun deactivate_vault_for_test<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &LiquidityAdminCap
+) {
+    deactivate_vault(vault);
+}
+
+#[test_only]
+/// Test wrapper for update_vault_config
+public fun update_vault_config_for_test<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &LiquidityAdminCap,
+    min_deposit: u64,
+    min_withdrawal: u64,
+    deposit_fee_bps: u64,
+    withdrawal_fee_bps: u64
+) {
+    update_vault_config(vault, min_deposit, min_withdrawal, deposit_fee_bps, withdrawal_fee_bps);
+}
+
+#[test_only]
+/// Test wrapper for emergency_pause
+public fun emergency_pause_for_test<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &LiquidityAdminCap
+) {
+    emergency_pause(vault);
+}
+
+#[test_only]
+/// Test wrapper for global_emergency_pause
+public fun global_emergency_pause_for_test<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &LiquidityAdminCap
+) {
+    global_emergency_pause(vault);
+}
+
+#[test_only]
+/// Test wrapper for update_daily_limit
+public fun update_daily_limit_for_test<T>(
+    vault: &mut Vault<T>,
+    new_limit: u64,
+    _admin_cap: &LiquidityAdminCap
+) {
+    update_daily_limit(vault, new_limit);
+}
+
+#[test_only]
+/// Test wrapper for reset_daily_limit
+public fun reset_daily_limit_for_test<T>(
+    vault: &mut Vault<T>,
+    _admin_cap: &LiquidityAdminCap
+) {
+    reset_daily_limit(vault);
+}
+
+#[test_only]
+/// Test wrapper for force_update_day_counter
+public fun force_update_day_counter_for_test<T>(
+    vault: &mut Vault<T>,
+    new_day: u64,
+    _admin_cap: &LiquidityAdminCap
+) {
+    force_update_day_counter(vault, new_day);
 }

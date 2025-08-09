@@ -52,7 +52,7 @@ const EConcurrentAccessViolation: u64 = 1015;
 /// Atomic operation failed
 const EAtomicOperationFailed: u64 = 1016;
 
-// ===== Account Module Error Codes (2000-2999) =====
+// ===== Account Module Error Codes (2000-2099) =====
 
 /// Account not found
 const EAccountNotFound: u64 = 2001;
@@ -99,6 +99,38 @@ const ESuspiciousActivityDetected: u64 = 2015;
 
 /// Account temporarily restricted
 const EAccountRestricted: u64 = 2016;
+
+// ===== Oracle Module Error Codes (2050-2099) =====
+
+/// Price feed not configured for asset type
+const EPriceFeedNotFound: u64 = 2050;
+
+/// Price data is stale (too old)
+const EPriceDataStale: u64 = 2051;
+
+/// Price confidence too low
+const EPriceConfidenceTooLow: u64 = 2052;
+
+/// Price manipulation detected
+const EPriceManipulationDetected: u64 = 2053;
+
+/// Invalid price feed ID
+const EInvalidPriceFeedId: u64 = 2054;
+
+/// Oracle in emergency mode
+const EOracleEmergencyMode: u64 = 2055;
+
+/// Price validation failed
+const EPriceValidationFailed: u64 = 2056;
+
+/// Unauthorized oracle access
+const EUnauthorizedOracleAccess: u64 = 2057;
+
+/// Invalid oracle configuration
+const EInvalidOracleConfig: u64 = 2058;
+
+/// Price cache miss
+const EPriceCacheMiss: u64 = 2059;
 
 // ===== General Error Codes (9000-9999) =====
 
@@ -152,6 +184,18 @@ public fun rate_limit_exceeded(): u64 { ERateLimitExceeded }
 public fun replay_attack_detected(): u64 { EReplayAttackDetected }
 public fun suspicious_activity_detected(): u64 { ESuspiciousActivityDetected }
 public fun account_restricted(): u64 { EAccountRestricted }
+
+/// Get Oracle-related error codes
+public fun price_feed_not_found(): u64 { EPriceFeedNotFound }
+public fun price_data_stale(): u64 { EPriceDataStale }
+public fun price_confidence_too_low(): u64 { EPriceConfidenceTooLow }
+public fun price_manipulation_detected(): u64 { EPriceManipulationDetected }
+public fun invalid_price_feed_id(): u64 { EInvalidPriceFeedId }
+public fun oracle_emergency_mode(): u64 { EOracleEmergencyMode }
+public fun price_validation_failed(): u64 { EPriceValidationFailed }
+public fun unauthorized_oracle_access(): u64 { EUnauthorizedOracleAccess }
+public fun invalid_oracle_config(): u64 { EInvalidOracleConfig }
+public fun price_cache_miss(): u64 { EPriceCacheMiss }
 
 /// Get general error codes
 public fun invalid_input(): u64 { EInvalidInput }

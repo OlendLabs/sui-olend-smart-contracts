@@ -7,13 +7,14 @@ module olend::ytoken;
 public struct YToken<phantom T> has drop {}
 
 /// Creates a YToken witness for supply creation
-/// This function allows other modules to create YToken supplies
+/// This function is restricted to package-level access to prevent unauthorized token creation
+/// Only the vault module can create YToken supplies to maintain security
 /// 
 /// # Type Parameters
 /// * `T` - The underlying asset type
 /// 
 /// # Returns
 /// * `YToken<T>` - YToken witness
-public fun create_witness<T>(): YToken<T> {
+public(package) fun create_witness<T>(): YToken<T> {
     YToken<T> {}
 }

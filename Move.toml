@@ -4,7 +4,10 @@ version = "1.0.0"
 edition = "2024.beta"
 
 [dependencies]
+Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-testnet" }
+Wormhole = { git = "https://github.com/wormhole-foundation/wormhole.git", subdir = "sui/wormhole", rev = "sui/testnet" }
 
 [addresses]
 olend = "0x0"
 sui = "0x2"
+# pyth = "0x975e063f398f2b5e0c1fd6ccb8b8ee4b8b8b8e1e8b8b8e1e8b8b8e1e8b8b8e1e8b"
