@@ -10,12 +10,14 @@ use sui::test_utils;
 use olend::liquidity;
 use olend::vault;
 use olend::constants;
+use olend::account;
 
 // Mock coin type for testing
 public struct TestCoin has drop {}
 
 const ADMIN: address = @0xAD;
 const USER: address = @0x123;
+const USER1: address = @0x1;
 
 /// Test Vault creation and initialization
 #[test]
@@ -67,6 +69,271 @@ fun test_create_vault() {
     test_utils::destroy(vault);
     test_scenario::return_shared(registry);
     test_scenario::return_to_sender(&scenario, admin_cap);
+    test_scenario::end(scenario);
+}
+
+/// Test creating and sharing a vault as a Shared Object
+#[test]
+fun test_create_and_share_vault() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize registry
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    let mut registry = test_scenario::take_shared<liquidity::Registry>(&scenario);
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
+    
+    // Create and share a vault
+    let max_daily_withdrawal = 1000000;
+    let vault_id = vault::create_and_share_vault<TestCoin>(
+        &mut registry,
+        &admin_cap,
+        max_daily_withdrawal,
+        test_scenario::ctx(&mut scenario)
+    );
+    
+    test_scenario::return_shared(registry);
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    
+    // Move to next transaction to access the shared vault
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    // Take the shared vault
+    let mut vault = test_scenario::take_shared<vault::Vault<TestCoin>>(&scenario);
+    
+    // Verify the vault ID matches
+    assert!(object::id(&vault) == vault_id, 0);
+    
+    // Verify initial vault state
+    assert!(vault::total_assets(&vault) == 0, 1);
+    assert!(vault::total_supply(&vault) == 0, 2);
+    assert!(vault::get_borrowed_assets(&vault) == 0, 3);
+    assert!(vault::get_available_assets(&vault) == 0, 4);
+    
+    // Verify vault status
+    assert!(vault::is_vault_active(&vault), 5);
+    assert!(!vault::is_vault_paused(&vault), 6);
+    
+    // Test that we can use the shared vault for operations
+    let deposit_amount = 1000;
+    let deposit_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let ytoken_coin = vault::deposit(&mut vault, deposit_coin, test_scenario::ctx(&mut scenario));
+    
+    // Verify deposit worked
+    assert!(vault::total_assets(&vault) == deposit_amount, 7);
+    assert!(vault::get_ytoken_value(&ytoken_coin) == deposit_amount, 8);
+    
+    // Clean up
+    coin::burn_for_testing(ytoken_coin);
+    test_scenario::return_shared(vault);
+    test_scenario::end(scenario);
+}
+
+/// Test vault consistency validation
+#[test]
+fun test_vault_consistency_validation() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Create vault for testing
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
+    
+    // Initially, vault should be consistent
+    assert!(vault::validate_vault_consistency(&vault, test_scenario::ctx(&mut scenario)), 0);
+    
+    // Add some assets
+    let deposit_amount = 1000;
+    let deposit_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let ytoken_coin = vault::deposit(&mut vault, deposit_coin, test_scenario::ctx(&mut scenario));
+    
+    // Should still be consistent after deposit
+    assert!(vault::validate_vault_consistency(&vault, test_scenario::ctx(&mut scenario)), 1);
+    
+    // Borrow some assets
+    let borrow_amount = 500;
+    let borrowed_coin = vault::borrow(&mut vault, borrow_amount, test_scenario::ctx(&mut scenario));
+    
+    // Should still be consistent after borrowing
+    assert!(vault::validate_vault_consistency(&vault, test_scenario::ctx(&mut scenario)), 2);
+    
+    // Repay the borrowed assets
+    vault::repay(&mut vault, borrowed_coin);
+    
+    // Should still be consistent after repayment
+    assert!(vault::validate_vault_consistency(&vault, test_scenario::ctx(&mut scenario)), 3);
+    
+    // Clean up
+    coin::burn_for_testing(ytoken_coin);
+    test_utils::destroy(vault);
+    test_scenario::end(scenario);
+}
+
+/// Test deposit and withdrawal fees
+#[test]
+fun test_deposit_withdrawal_fees() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize registry to get admin cap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    // Get admin cap
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
+    
+    // Create vault for testing
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
+    
+    // Set fees: 5% deposit fee, 3% withdrawal fee
+    vault::update_vault_config_for_test(&mut vault, &admin_cap, 1, 1, 500, 300); // 5% = 500 bps, 3% = 300 bps
+    
+    // Return admin cap before moving to next transaction
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    
+    test_scenario::next_tx(&mut scenario, USER);
+    
+    // Test deposit with fee
+    let deposit_amount = 1000;
+    let deposit_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let ytoken_coin = vault::deposit(&mut vault, deposit_coin, test_scenario::ctx(&mut scenario));
+    
+    // With 5% deposit fee, user should get shares based on 950 (net amount)
+    let expected_net_deposit = 950; // 1000 - 50 (5% fee)
+    assert!(vault::get_ytoken_value(&ytoken_coin) == expected_net_deposit, 0);
+    
+    // Total assets should be 1000 (including fee)
+    assert!(vault::total_assets(&vault) == deposit_amount, 1);
+    
+    // Test withdrawal with fee
+    let withdrawn_coin = vault::withdraw(&mut vault, ytoken_coin, test_scenario::ctx(&mut scenario));
+    
+    // Debug: Check what we actually got
+    let actual_withdrawal = coin::value(&withdrawn_coin);
+    
+    // The user deposited 1000, with 5% fee, so net deposit was 950
+    // User got 950 shares (1:1 ratio initially)
+    // When withdrawing 950 shares, gross withdrawal should be 950
+    // With 3% withdrawal fee: fee = 950 * 300 / 10000 = 28.5 ≈ 28 (integer division)
+    // Net withdrawal = 950 - 28 = 922
+    
+    // But wait, let's check the total assets in vault after deposit
+    // Total assets should be 1000 (including the 50 deposit fee)
+    // So when converting 950 shares back to assets, it should still be 950
+    // because total_supply is 950 and total_assets is 1000
+    // convert_to_assets = shares * total_assets / total_supply = 950 * 1000 / 950 = 1000
+    
+    // So gross withdrawal is actually 1000, not 950!
+    // Fee = 1000 * 300 / 10000 = 30
+    // Net withdrawal = 1000 - 30 = 970
+    
+    let expected_withdrawal = 970;
+    assert!(actual_withdrawal == expected_withdrawal, 2);
+    
+    // Clean up
+    coin::burn_for_testing(withdrawn_coin);
+    test_utils::destroy(vault);
+    test_scenario::end(scenario);
+}
+
+/// Test zero fees (default behavior)
+#[test]
+fun test_zero_fees() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Create vault for testing (default 0% fees)
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
+    
+    test_scenario::next_tx(&mut scenario, USER);
+    
+    // Test deposit with zero fee
+    let deposit_amount = 1000;
+    let deposit_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let ytoken_coin = vault::deposit(&mut vault, deposit_coin, test_scenario::ctx(&mut scenario));
+    
+    // With 0% fee, user should get full shares
+    assert!(vault::get_ytoken_value(&ytoken_coin) == deposit_amount, 0);
+    assert!(vault::total_assets(&vault) == deposit_amount, 1);
+    
+    // Test withdrawal with zero fee
+    let withdrawn_coin = vault::withdraw(&mut vault, ytoken_coin, test_scenario::ctx(&mut scenario));
+    
+    // With 0% fee, user should get full amount back
+    assert!(coin::value(&withdrawn_coin) == deposit_amount, 2);
+    
+    // Clean up
+    coin::burn_for_testing(withdrawn_coin);
+    test_utils::destroy(vault);
+    test_scenario::end(scenario);
+}
+
+/// Test high fees (99% to demonstrate fee mechanism)
+#[test]
+fun test_high_fees() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    
+    // Initialize registry to get admin cap
+    liquidity::init_for_testing(test_scenario::ctx(&mut scenario));
+    
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    
+    // Get admin cap and create vault
+    let admin_cap = test_scenario::take_from_sender<liquidity::LiquidityAdminCap>(&scenario);
+    let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
+    
+    // Set high fees: 99% deposit fee, 99% withdrawal fee
+    vault::update_vault_config_for_test(&mut vault, &admin_cap, 1, 1, 9900, 9900); // 99% = 9900 bps
+    test_scenario::return_to_sender(&scenario, admin_cap);
+    
+    test_scenario::next_tx(&mut scenario, USER);
+    
+    // Test deposit with 99% fee
+    let deposit_amount = 1000;
+    let deposit_coin = coin::mint_for_testing<TestCoin>(deposit_amount, test_scenario::ctx(&mut scenario));
+    let ytoken_coin = vault::deposit(&mut vault, deposit_coin, test_scenario::ctx(&mut scenario));
+    
+    // With 99% deposit fee, user should get 1% = 10 shares
+    assert!(vault::get_ytoken_value(&ytoken_coin) == 10, 0);
+    
+    // Total assets should still be 1000 (fee stays in vault)
+    assert!(vault::total_assets(&vault) == deposit_amount, 1);
+    
+    // Clean up
+    coin::burn_for_testing(ytoken_coin);
+    test_utils::destroy(vault);
+    test_scenario::end(scenario);
+}
+
+/// Test points deduction functionality
+#[test]
+fun test_points_deduction() {
+    let mut scenario = test_scenario::begin(USER1);
+    
+    // Create account
+    let (mut account, account_cap) = account::create_account_for_test(
+        USER1, 
+        test_scenario::ctx(&mut scenario)
+    );
+    
+    // Add some points first
+    account::update_level_and_points(&mut account, &account_cap, 5, 1000);
+    assert!(account::get_points(&account) == 1000, 0);
+    
+    // Test normal deduction
+    account::deduct_points(&mut account, &account_cap, 300);
+    assert!(account::get_points(&account) == 700, 1);
+    
+    // Test deduction that would cause underflow (should set to 0)
+    account::deduct_points(&mut account, &account_cap, 1000);
+    assert!(account::get_points(&account) == 0, 2);
+    
+    // Test deduction from 0 (should remain 0)
+    account::deduct_points(&mut account, &account_cap, 100);
+    assert!(account::get_points(&account) == 0, 3);
+    
+    // Cleanup
+    sui::test_utils::destroy(account);
+    sui::test_utils::destroy(account_cap);
     test_scenario::end(scenario);
 }
 
@@ -262,30 +529,30 @@ fun test_vault_status_management() {
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Test pause functionality
-    vault::pause_vault_operations(&mut vault, &admin_cap);
+    vault::pause_vault_operations_for_test(&mut vault, &admin_cap);
     assert!(vault::is_vault_paused(&vault), 1);
     assert!(!vault::deposits_allowed(&vault), 2);
     assert!(!vault::withdrawals_allowed(&vault), 3);
     
     // Test resume functionality
-    vault::resume_vault_operations(&mut vault, &admin_cap);
+    vault::resume_vault_operations_for_test(&mut vault, &admin_cap);
     assert!(vault::is_vault_active(&vault), 4);
     assert!(!vault::is_vault_paused(&vault), 5);
     assert!(vault::deposits_allowed(&vault), 6);
     assert!(vault::withdrawals_allowed(&vault), 7);
     
     // Test deposits only mode
-    vault::set_deposits_only(&mut vault, &admin_cap);
+    vault::set_deposits_only_for_test(&mut vault, &admin_cap);
     assert!(vault::deposits_allowed(&vault), 8);
     assert!(!vault::withdrawals_allowed(&vault), 9);
     
     // Test withdrawals only mode
-    vault::set_withdrawals_only(&mut vault, &admin_cap);
+    vault::set_withdrawals_only_for_test(&mut vault, &admin_cap);
     assert!(!vault::deposits_allowed(&vault), 10);
     assert!(vault::withdrawals_allowed(&vault), 11);
     
     // Test deactivation
-    vault::deactivate_vault(&mut vault, &admin_cap);
+    vault::deactivate_vault_for_test(&mut vault, &admin_cap);
     assert!(!vault::is_vault_active(&vault), 12);
     assert!(!vault::deposits_allowed(&vault), 13);
     assert!(!vault::withdrawals_allowed(&vault), 14);
@@ -314,7 +581,7 @@ fun test_vault_config_update() {
     let new_deposit_fee = 25; // 0.25%
     let new_withdrawal_fee = 50; // 0.5%
     
-    vault::update_vault_config(
+    vault::update_vault_config_for_test(
         &mut vault,
         &admin_cap,
         new_min_deposit,
@@ -414,7 +681,7 @@ fun test_paused_vault_deposit_fails() {
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Pause vault
-    vault::pause_vault_operations(&mut vault, &admin_cap);
+    vault::pause_vault_operations_for_test(&mut vault, &admin_cap);
     
     // Try to deposit (should fail)
     let test_coin = coin::mint_for_testing<TestCoin>(100, test_scenario::ctx(&mut scenario));
@@ -801,29 +1068,29 @@ fun test_all_status_transitions() {
     assert!(vault::withdrawals_allowed(&vault), 2);
     
     // Test pause transition
-    vault::pause_vault_operations(&mut vault, &admin_cap);
+    vault::pause_vault_operations_for_test(&mut vault, &admin_cap);
     assert!(vault::is_vault_paused(&vault), 3);
     assert!(!vault::deposits_allowed(&vault), 4);
     assert!(!vault::withdrawals_allowed(&vault), 5);
     
     // Test resume transition
-    vault::resume_vault_operations(&mut vault, &admin_cap);
+    vault::resume_vault_operations_for_test(&mut vault, &admin_cap);
     assert!(vault::is_vault_active(&vault), 6);
     assert!(vault::deposits_allowed(&vault), 7);
     assert!(vault::withdrawals_allowed(&vault), 8);
     
     // Test deposits only mode
-    vault::set_deposits_only(&mut vault, &admin_cap);
+    vault::set_deposits_only_for_test(&mut vault, &admin_cap);
     assert!(vault::deposits_allowed(&vault), 9);
     assert!(!vault::withdrawals_allowed(&vault), 10);
     
     // Test withdrawals only mode
-    vault::set_withdrawals_only(&mut vault, &admin_cap);
+    vault::set_withdrawals_only_for_test(&mut vault, &admin_cap);
     assert!(!vault::deposits_allowed(&vault), 11);
     assert!(vault::withdrawals_allowed(&vault), 12);
     
     // Test deactivation
-    vault::deactivate_vault(&mut vault, &admin_cap);
+    vault::deactivate_vault_for_test(&mut vault, &admin_cap);
     assert!(!vault::is_vault_active(&vault), 13);
     assert!(!vault::deposits_allowed(&vault), 14);
     assert!(!vault::withdrawals_allowed(&vault), 15);
@@ -851,14 +1118,14 @@ fun test_operations_in_different_states() {
     let mut ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
     
     // Set to deposits only mode
-    vault::set_deposits_only(&mut vault, &admin_cap);
+    vault::set_deposits_only_for_test(&mut vault, &admin_cap);
     
     // Deposit should work
     let test_coin2 = coin::mint_for_testing<TestCoin>(500, test_scenario::ctx(&mut scenario));
     let ytoken2 = vault::deposit(&mut vault, test_coin2, test_scenario::ctx(&mut scenario));
     
     // Set to withdrawals only mode
-    vault::set_withdrawals_only(&mut vault, &admin_cap);
+    vault::set_withdrawals_only_for_test(&mut vault, &admin_cap);
     
     // Withdrawal should work
     let partial_ytoken = coin::split(&mut ytoken, 300, test_scenario::ctx(&mut scenario));
@@ -894,7 +1161,7 @@ fun test_emergency_pause() {
     assert!(!vault::is_emergency_paused(&vault), 1);
     
     // Emergency pause
-    vault::emergency_pause(&mut vault, &admin_cap);
+    vault::emergency_pause_for_test(&mut vault, &admin_cap);
     
     // Verify emergency state
     assert!(!vault::is_vault_active(&vault), 2);
@@ -922,7 +1189,7 @@ fun test_emergency_pause_blocks_operations() {
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Emergency pause
-    vault::emergency_pause(&mut vault, &admin_cap);
+    vault::emergency_pause_for_test(&mut vault, &admin_cap);
     
     // Try to deposit (should fail)
     let test_coin = coin::mint_for_testing<TestCoin>(100, test_scenario::ctx(&mut scenario));
@@ -953,7 +1220,7 @@ fun test_update_daily_limit() {
     
     // Update limit
     let new_limit = 500000;
-    vault::update_daily_limit(&mut vault, new_limit, &admin_cap);
+    vault::update_daily_limit_for_test(&mut vault, new_limit, &admin_cap);
     
     // Verify update
     let (updated_limit, _, _) = vault::get_daily_limit(&vault);
@@ -1029,7 +1296,7 @@ fun test_invalid_daily_limit_update() {
     let mut vault = vault::create_vault_for_test<TestCoin>(1000000, test_scenario::ctx(&mut scenario));
     
     // Try to set zero limit (should fail)
-    vault::update_daily_limit(&mut vault, 0, &admin_cap);
+    vault::update_daily_limit_for_test(&mut vault, 0, &admin_cap);
     
     // Cleanup
     test_utils::destroy(vault);
@@ -1056,7 +1323,7 @@ fun test_enhanced_emergency_pause() {
     assert!(!vault::is_emergency_paused(&vault), 1);
     
     // Perform emergency pause
-    vault::emergency_pause(&mut vault, &admin_cap);
+    vault::emergency_pause_for_test(&mut vault, &admin_cap);
     
     // Verify emergency pause state
     assert!(!vault::is_vault_active(&vault), 2);
@@ -1086,7 +1353,7 @@ fun test_global_emergency_pause() {
     assert!(!vault::is_global_emergency_paused(&vault), 0);
     
     // Perform global emergency pause
-    vault::global_emergency_pause(&mut vault, &admin_cap);
+    vault::global_emergency_pause_for_test(&mut vault, &admin_cap);
     
     // Verify global emergency pause state
     assert!(vault::is_emergency_paused(&vault), 1);
@@ -1138,7 +1405,7 @@ fun test_daily_limit_management() {
     assert!(remaining_after == 700, 4);
     
     // Test reset_daily_limit function
-    vault::reset_daily_limit(&mut vault, &admin_cap);
+    vault::reset_daily_limit_for_test(&mut vault, &admin_cap);
     let remaining_after_reset = vault::get_remaining_daily_limit(&vault, test_scenario::ctx(&mut scenario));
     assert!(remaining_after_reset == 1000, 5);
     
@@ -1168,7 +1435,7 @@ fun test_enhanced_update_daily_limit() {
     
     // Update daily limit
     let new_limit = 2000;
-    vault::update_daily_limit(&mut vault, new_limit, &admin_cap);
+    vault::update_daily_limit_for_test(&mut vault, new_limit, &admin_cap);
     
     // Verify updated daily limit
     let (updated_limit, _, _) = vault::get_daily_limit(&vault);
@@ -1211,7 +1478,7 @@ fun test_force_update_day_counter() {
     
     // Force update day counter
     let new_day = current_day + 1;
-    vault::force_update_day_counter(&mut vault, new_day, &admin_cap);
+    vault::force_update_day_counter_for_test(&mut vault, new_day, &admin_cap);
     
     // Verify day counter update and reset
     let (_, updated_day, withdrawn_after_update) = vault::get_daily_limit(&vault);
@@ -1265,7 +1532,7 @@ fun test_security_status_check() {
     assert!(utilization_rate_after == 3000, 6);
     
     // Test emergency pause effect on security status
-    vault::emergency_pause(&mut vault, &admin_cap);
+    vault::emergency_pause_for_test(&mut vault, &admin_cap);
     let (is_active_after, _, emergency_paused_after, _, _, _) = 
         vault::get_security_status(&vault, test_scenario::ctx(&mut scenario));
     
@@ -1294,7 +1561,7 @@ fun test_emergency_pause_blocks_deposit() {
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Emergency pause the vault
-    vault::emergency_pause(&mut vault, &admin_cap);
+    vault::emergency_pause_for_test(&mut vault, &admin_cap);
     
     // Try to deposit (should fail)
     let test_coin = coin::mint_for_testing<TestCoin>(100, test_scenario::ctx(&mut scenario));
@@ -1325,7 +1592,7 @@ fun test_emergency_pause_blocks_withdrawal() {
     let ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
     
     // Emergency pause the vault
-    vault::emergency_pause(&mut vault, &admin_cap);
+    vault::emergency_pause_for_test(&mut vault, &admin_cap);
     
     // Try to withdraw (should fail)
     let withdrawn_coin = vault::withdraw(&mut vault, ytoken, test_scenario::ctx(&mut scenario));
@@ -1355,7 +1622,7 @@ fun test_emergency_pause_blocks_borrow() {
     let ytoken = vault::deposit(&mut vault, test_coin, test_scenario::ctx(&mut scenario));
     
     // Emergency pause the vault
-    vault::emergency_pause(&mut vault, &admin_cap);
+    vault::emergency_pause_for_test(&mut vault, &admin_cap);
     
     // Try to borrow (should fail)
     let borrowed_coin = vault::borrow(&mut vault, 50, test_scenario::ctx(&mut scenario));
@@ -1382,7 +1649,7 @@ fun test_enhanced_invalid_daily_limit_update() {
     let mut vault = vault::create_vault_for_test<TestCoin>(1000, test_scenario::ctx(&mut scenario));
     
     // Try to set zero daily limit (should fail)
-    vault::update_daily_limit(&mut vault, 0, &admin_cap);
+    vault::update_daily_limit_for_test(&mut vault, 0, &admin_cap);
     
     // Cleanup
     test_utils::destroy(vault);
@@ -1405,7 +1672,7 @@ fun test_daily_limit_exceeds_maximum() {
     
     // Try to set daily limit above maximum (should fail)
     let max_limit = constants::max_daily_withdrawal_limit();
-    vault::update_daily_limit(&mut vault, max_limit + 1, &admin_cap);
+    vault::update_daily_limit_for_test(&mut vault, max_limit + 1, &admin_cap);
     
     // Cleanup
     test_utils::destroy(vault);
@@ -1430,7 +1697,7 @@ fun test_version_mismatch_in_security_functions() {
     vault::set_vault_version_for_test(&mut vault, 0);
     
     // Try to reset daily limit (should fail due to version mismatch)
-    vault::reset_daily_limit(&mut vault, &admin_cap);
+    vault::reset_daily_limit_for_test(&mut vault, &admin_cap);
     
     // Cleanup
     test_utils::destroy(vault);

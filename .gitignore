@@ -32,3 +32,9 @@ node_modules/
 # tasks/ 
 
 CLAUDE.md
+NEW_SESSION_PROMPT.md
+PROJECT_STATUS.md
+SYNC_SUMMARY.md
+
+.trace
+.coverage_map.mvcov

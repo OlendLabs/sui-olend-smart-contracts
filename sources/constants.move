@@ -47,6 +47,26 @@ const ALLOWANCE_TYPE_TRADING: u8 = 3;
 /// Withdrawal allowance type
 const ALLOWANCE_TYPE_WITHDRAWAL: u8 = 4;
 
+// ===== Oracle Constants =====
+
+/// Default maximum price delay in seconds (5 minutes)
+const DEFAULT_MAX_PRICE_DELAY: u64 = 300;
+
+/// Default minimum confidence requirement (95%)
+const DEFAULT_MIN_CONFIDENCE: u64 = 95;
+
+/// Default cache expiry time in seconds (1 minute)
+const DEFAULT_CACHE_EXPIRY: u64 = 60;
+
+/// Default maximum price change percentage in basis points (10%)
+const DEFAULT_MAX_PRICE_CHANGE_PCT: u64 = 1000;
+
+/// Price decimal precision (8 decimal places)
+const PRICE_DECIMAL_PRECISION: u8 = 8;
+
+/// Maximum confidence level (100%)
+const MAX_CONFIDENCE_LEVEL: u64 = 100;
+
 // ===== Public Access Functions =====
 
 /// Get current protocol version
@@ -87,3 +107,21 @@ public fun max_suspicious_activities(): u64 { MAX_SUSPICIOUS_ACTIVITIES }
 
 /// Get suspicious activity cooldown period
 public fun suspicious_activity_cooldown_ms(): u64 { SUSPICIOUS_ACTIVITY_COOLDOWN_MS }
+
+/// Get default maximum price delay
+public fun default_max_price_delay(): u64 { DEFAULT_MAX_PRICE_DELAY }
+
+/// Get default minimum confidence
+public fun default_min_confidence(): u64 { DEFAULT_MIN_CONFIDENCE }
+
+/// Get default cache expiry time
+public fun default_cache_expiry(): u64 { DEFAULT_CACHE_EXPIRY }
+
+/// Get default maximum price change percentage
+public fun default_max_price_change_pct(): u64 { DEFAULT_MAX_PRICE_CHANGE_PCT }
+
+/// Get price decimal precision
+public fun price_decimal_precision(): u8 { PRICE_DECIMAL_PRECISION }
+
+/// Get maximum confidence level
+public fun max_confidence_level(): u64 { MAX_CONFIDENCE_LEVEL }
