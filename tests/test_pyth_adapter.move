@@ -123,7 +123,7 @@ fun test_multiple_price_feeds() {
 
 /// Test price feed configuration validation
 #[test]
-#[expected_failure(abort_code = 2054)]
+#[expected_failure(abort_code = 2054, location = olend::pyth_adapter)]
 fun test_invalid_price_feed_id() {
     let mut scenario = test::begin(ADMIN);
     

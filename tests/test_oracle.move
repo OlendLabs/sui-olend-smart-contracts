@@ -267,7 +267,7 @@ fun test_admin_config() {
 
 /// Test error conditions
 #[test]
-#[expected_failure(abort_code = 2050)]
+#[expected_failure(abort_code = 2050, location = olend::oracle)]
 fun test_get_price_without_feed() {
     let mut scenario = test::begin(ADMIN);
     let clock = clock::create_for_testing(ctx(&mut scenario));
@@ -296,7 +296,7 @@ fun test_get_price_without_feed() {
 
 /// Test emergency mode blocking
 #[test]
-#[expected_failure(abort_code = 2055)]
+#[expected_failure(abort_code = 2055, location = olend::oracle)]
 fun test_emergency_mode_blocks_price_access() {
     let mut scenario = test::begin(ADMIN);
     let clock = clock::create_for_testing(ctx(&mut scenario));
