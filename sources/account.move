@@ -304,7 +304,7 @@ public fun remove_position(
 /// * `account` - Mutable reference to the account
 /// * `cap` - Reference to the account capability for authorization
 /// * `new_level` - New user level (1-10)
-/// * `points_delta` - Points to add (can be negative for deduction)
+/// * `points_delta` - Points to add (must be positive; use separate function for deduction)
 public fun update_level_and_points(
     account: &mut Account,
     cap: &AccountCap,
@@ -323,6 +323,31 @@ public fun update_level_and_points(
     // Update level and points
     account.level = new_level;
     account.points = account.points + points_delta;
+}
+
+/// Deducts points from user account with safe underflow protection
+/// 
+/// # Arguments
+/// * `account` - Mutable reference to the account
+/// * `cap` - Reference to the account capability for authorization
+/// * `points_to_deduct` - Points to deduct (with underflow protection)
+public fun deduct_points(
+    account: &mut Account,
+    cap: &AccountCap,
+    points_to_deduct: u64
+) {
+    // Verify permission
+    assert!(verify_account_cap(account, cap), errors::account_cap_mismatch());
+    
+    // Verify version
+    assert!(account.version == constants::current_version(), errors::version_mismatch());
+    
+    // Safe deduction with underflow protection
+    if (account.points >= points_to_deduct) {
+        account.points = account.points - points_to_deduct;
+    } else {
+        account.points = 0; // Set to 0 if deduction would cause underflow
+    };
 }
 
 /// Updates account activity timestamp
