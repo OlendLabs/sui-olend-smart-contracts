@@ -1,6 +1,7 @@
 /// Test module for BorrowingPool functionality
 /// Tests the core borrowing pool structure and basic operations
 #[test_only]
+#[allow(unused_use, unused_const)]
 module olend::test_borrowing_pool;
 
 use sui::test_scenario::{Self as test, Scenario, next_tx, ctx};
@@ -27,10 +28,11 @@ const USER: address = @0xB0B;
 fun test_initialize_borrowing_pools() {
     let mut scenario = test::begin(ADMIN);
     
-    // Initialize borrowing pools
-    let admin_cap = borrowing_pool::initialize_borrowing_pools(ctx(&mut scenario));
-    
+    // Initialize borrowing pools (testing)
+    borrowing_pool::init_for_testing(ctx(&mut scenario));
+    next_tx(&mut scenario, ADMIN);
     // Verify admin cap was created and destroy it
+    let admin_cap = test::take_from_sender<BorrowingPoolAdminCap>(&scenario);
     test_utils::destroy(admin_cap);
     
     test::end(scenario);
@@ -41,12 +43,13 @@ fun test_initialize_borrowing_pools() {
 fun test_create_borrowing_pool() {
     let mut scenario = test::begin(ADMIN);
     
-    // Initialize borrowing pools
-    let admin_cap = borrowing_pool::initialize_borrowing_pools(ctx(&mut scenario));
+    // Initialize borrowing pools (testing)
+    borrowing_pool::init_for_testing(ctx(&mut scenario));
     
     next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test::take_shared<BorrowingPoolRegistry>(&scenario);
+        let admin_cap = test::take_from_sender<BorrowingPoolAdminCap>(&scenario);
         let clock = clock::create_for_testing(ctx(&mut scenario));
         
         // Create a borrowing pool for USDC
@@ -73,10 +76,9 @@ fun test_create_borrowing_pool() {
         assert!(borrowing_pool::get_total_pools(&registry) == 1, 1);
         
         clock::destroy_for_testing(clock);
+        test_utils::destroy(admin_cap);
         test::return_shared(registry);
     };
-    
-    test_utils::destroy(admin_cap);
     test::end(scenario);
 }
 
@@ -85,12 +87,13 @@ fun test_create_borrowing_pool() {
 fun test_borrowing_pool_queries() {
     let mut scenario = test::begin(ADMIN);
     
-    // Initialize borrowing pools
-    let admin_cap = borrowing_pool::initialize_borrowing_pools(ctx(&mut scenario));
+    // Initialize borrowing pools (testing)
+    borrowing_pool::init_for_testing(ctx(&mut scenario));
     
     next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test::take_shared<BorrowingPoolRegistry>(&scenario);
+        let admin_cap = test::take_from_sender<BorrowingPoolAdminCap>(&scenario);
         let clock = clock::create_for_testing(ctx(&mut scenario));
         
         // Create a borrowing pool
@@ -113,6 +116,7 @@ fun test_borrowing_pool_queries() {
         );
         
         clock::destroy_for_testing(clock);
+        test_utils::destroy(admin_cap);
         test::return_shared(registry);
     };
     
@@ -162,7 +166,6 @@ fun test_borrowing_pool_queries() {
         test::return_shared(pool);
     };
     
-    test_utils::destroy(admin_cap);
     test::end(scenario);
 }
 
@@ -221,12 +224,13 @@ fun test_init_registry_for_test() {
 fun test_multiple_asset_types() {
     let mut scenario = test::begin(ADMIN);
     
-    // Initialize borrowing pools
-    let admin_cap = borrowing_pool::initialize_borrowing_pools(ctx(&mut scenario));
+    // Initialize borrowing pools (testing)
+    borrowing_pool::init_for_testing(ctx(&mut scenario));
     
     next_tx(&mut scenario, ADMIN);
     {
         let mut registry = test::take_shared<BorrowingPoolRegistry>(&scenario);
+        let admin_cap = test::take_from_sender<BorrowingPoolAdminCap>(&scenario);
         let clock = clock::create_for_testing(ctx(&mut scenario));
         
         // Create pools for different assets
@@ -260,9 +264,8 @@ fun test_multiple_asset_types() {
         assert!(vector::length(&btc_pools) == 1, 2);
         
         clock::destroy_for_testing(clock);
+        test_utils::destroy(admin_cap);
         test::return_shared(registry);
     };
-    
-    test_utils::destroy(admin_cap);
     test::end(scenario);
 }

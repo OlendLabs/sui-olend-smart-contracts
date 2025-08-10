@@ -1,5 +1,6 @@
 /// Lending Pool Module - Lending pool management system
 /// Implements LendingPool for asset lending with interest earning
+#[allow(unused_const, unused_field)]
 module olend::lending_pool;
 
 use std::type_name::{Self, TypeName};
@@ -225,15 +226,14 @@ const SECONDS_PER_YEAR: u64 = 31536000;
 
 // ===== Creation and Initialization Functions =====
 
-/// Initialize the lending pool system
-/// Creates a shared LendingPoolRegistry and returns admin capability
-public fun initialize_lending_pools(ctx: &mut TxContext): LendingPoolAdminCap {
+/// Creates a new LendingPoolRegistry and its admin capability (not shared)
+/// Returns both so that callers can decide whether to publish or transfer
+fun create_registry(ctx: &mut TxContext): (LendingPoolRegistry, LendingPoolAdminCap) {
     let admin_cap = LendingPoolAdminCap {
         id: object::new(ctx),
     };
-    
     let admin_cap_id = object::id(&admin_cap);
-    
+
     let registry = LendingPoolRegistry {
         id: object::new(ctx),
         version: constants::current_version(),
@@ -242,9 +242,23 @@ public fun initialize_lending_pools(ctx: &mut TxContext): LendingPoolAdminCap {
         pool_counter: 0,
         admin_cap_id,
     };
-    
+
+    (registry, admin_cap)
+}
+
+/// Module initialization function
+/// Creates and shares the LendingPoolRegistry, and transfers admin cap to sender
+fun init(ctx: &mut TxContext) {
+    let (registry, admin_cap) = create_registry(ctx);
     transfer::share_object(registry);
-    admin_cap
+    transfer::transfer(admin_cap, tx_context::sender(ctx));
+}
+
+#[test_only]
+/// Initialize LendingPoolRegistry for testing
+/// Shares the registry and transfers admin cap to the test sender
+public fun init_for_testing(ctx: &mut TxContext) {
+    init(ctx)
 }
 
 /// Create a new lending pool

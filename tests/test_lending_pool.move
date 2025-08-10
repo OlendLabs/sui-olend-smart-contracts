@@ -870,8 +870,10 @@ fun setup_complete_environment(scenario: &mut Scenario) {
         // Initialize liquidity system
         liquidity::init_for_testing(ts::ctx(scenario));
         
-        // Initialize lending pool system
-        let admin_cap = lending_pool::initialize_lending_pools(ts::ctx(scenario));
+        // Initialize lending pool system (testing)
+        lending_pool::init_for_testing(ts::ctx(scenario));
+        ts::next_tx(scenario, ADMIN);
+        let admin_cap = ts::take_from_sender<LendingPoolAdminCap>(scenario);
         transfer::public_transfer(admin_cap, ADMIN);
     };
 }

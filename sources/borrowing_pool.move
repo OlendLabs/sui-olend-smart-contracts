@@ -328,13 +328,11 @@ fun init(ctx: &mut TxContext) {
     transfer::transfer(admin_cap, tx_context::sender(ctx));
 }
 
-/// Initialize the borrowing pool system
-/// Creates a shared BorrowingPoolRegistry and returns admin capability
-public(package) fun initialize_borrowing_pools(ctx: &mut TxContext): BorrowingPoolAdminCap {
-    // Backward-compatible helper: share registry and return admin cap
-    let (registry, admin_cap) = create_registry(ctx);
-    transfer::share_object(registry);
-    admin_cap
+#[test_only]
+/// Initialize BorrowingPoolRegistry for testing
+/// Shares the registry and transfers admin cap to the test sender
+public fun init_for_testing(ctx: &mut TxContext) {
+    init(ctx)
 }
 
 /// Create a new borrowing pool
