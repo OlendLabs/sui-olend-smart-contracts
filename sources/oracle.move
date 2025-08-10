@@ -385,6 +385,24 @@ public fun clear_price_cache<T>(
     };
 }
 
+/// Rotate Oracle admin capability. Creates and returns a new OracleAdminCap and binds it to oracle.
+/// Requires the current admin to authorize the rotation.
+public fun rotate_admin(
+    oracle: &mut PriceOracle,
+    current_admin_cap: &OracleAdminCap,
+    ctx: &mut TxContext
+): OracleAdminCap {
+    // Current admin must match
+    assert!(object::id(current_admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
+
+    // Create new admin cap and rebind
+    let new_admin_cap = OracleAdminCap { id: object::new(ctx) };
+    let new_admin_cap_id = object::id(&new_admin_cap);
+    oracle.admin_cap_id = new_admin_cap_id;
+
+    new_admin_cap
+}
+
 // ===== Internal Helper Functions =====
 
 /// Validate price data quality

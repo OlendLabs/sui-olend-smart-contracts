@@ -83,18 +83,28 @@ public fun batch_update_prices_from_pyth(
 
 /// Get fresh price from Pyth without caching (for immediate use)
 /// Type parameter T is needed for future type-specific operations
-#[allow(unused_type_parameter)]
 public fun get_fresh_price_from_pyth<T>(
-    _oracle: &PriceOracle,
+    oracle: &PriceOracle,
     pyth_state: &PythState,
     price_info_object: &PriceInfoObject,
     clock: &Clock,
 ): oracle::PriceInfo {
-    // Get price from Pyth using the actual API
+    // Use T to ensure the asset type has been configured and to drive downstream logic
+    // 1) Ensure price feed for T is configured (bind T to oracle mapping)
+    assert!(oracle::has_price_feed<T>(oracle), errors::price_feed_not_found());
+
+    // 2) Fetch raw price from Pyth for the provided price_info_object (feed id checked by caller)
     let pyth_price = pyth::get_price(pyth_state, price_info_object, clock);
-    
-    // Convert and return
-    convert_pyth_price_to_price_info(pyth_price, clock)
+
+    // 3) Convert to protocol PriceInfo format
+    let price_info = convert_pyth_price_to_price_info(pyth_price, clock);
+
+    // 4) Run the same validation used by cached path to ensure consistency
+    //    Note: We don't have current_time here, but validation uses clock internally
+    validate_pyth_price_data(price_info, clock);
+
+    // 5) Return fresh, validated price bound to asset type T at the call site
+    price_info
 }
 
 /// Verify Pyth price feed availability for an asset

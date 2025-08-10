@@ -577,6 +577,167 @@ fun test_unauthorized_deposit() {
     }
 }
 
+/// Pool admin enforcement: unauthorized pause should fail
+#[test]
+#[expected_failure(abort_code = 1007, location = olend::lending_pool)]
+fun test_pool_pause_unauthorized_admin() {
+    let mut scenario = ts::begin(ADMIN);
+    setup_complete_environment(&mut scenario);
+    create_test_pool_and_vault(&mut scenario);
+
+    ts::next_tx(&mut scenario, ADMIN);
+    {
+        let mut pool = ts::take_shared<LendingPool<TestCoin>>(&scenario);
+        // Create a fake admin cap via test initializer (different object id)
+        let (_reg2, fake_admin_cap) = lending_pool::init_registry_for_test(ts::ctx(&mut scenario));
+        let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+
+        // Should abort due to unauthorized access
+        lending_pool::pause_pool(&mut pool, &fake_admin_cap, &clock);
+
+        abort 999
+    }
+}
+
+/// Pool admin enforcement: unauthorized config update should fail
+#[test]
+#[expected_failure(abort_code = 1007, location = olend::lending_pool)]
+fun test_pool_update_config_unauthorized() {
+    let mut scenario = ts::begin(ADMIN);
+    setup_complete_environment(&mut scenario);
+    create_test_pool_and_vault(&mut scenario);
+
+    ts::next_tx(&mut scenario, ADMIN);
+    {
+        let mut pool = ts::take_shared<LendingPool<TestCoin>>(&scenario);
+        let (_reg2, fake_admin_cap) = lending_pool::init_registry_for_test(ts::ctx(&mut scenario));
+
+        // Reuse the same config (no field access outside module) and attempt to set to trigger admin check
+        let cfg = lending_pool::get_pool_config(&pool);
+        lending_pool::update_pool_config(&mut pool, &fake_admin_cap, cfg);
+
+        abort 999
+    }
+}
+
+/// Pool admin enforcement: unauthorized interest rate update should fail
+#[test]
+#[expected_failure(abort_code = 1007, location = olend::lending_pool)]
+fun test_pool_update_rates_unauthorized() {
+    let mut scenario = ts::begin(ADMIN);
+    setup_complete_environment(&mut scenario);
+    create_test_pool_and_vault(&mut scenario);
+
+    ts::next_tx(&mut scenario, ADMIN);
+    {
+        let mut pool = ts::take_shared<LendingPool<TestCoin>>(&scenario);
+        let (_reg2, fake_admin_cap) = lending_pool::init_registry_for_test(ts::ctx(&mut scenario));
+        let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+
+        lending_pool::update_interest_rates(&mut pool, &fake_admin_cap, 1000, 2000, 1500, &clock);
+
+        abort 999
+    }
+}
+
+/// Global emergency: deposit should be blocked by vault emergency pause
+#[test]
+#[expected_failure(abort_code = 9003, location = olend::lending_pool)]
+fun test_deposit_blocked_by_vault_global_emergency() {
+    let mut scenario = ts::begin(ADMIN);
+    setup_complete_environment(&mut scenario);
+    create_test_pool_and_vault(&mut scenario);
+
+    // Set vault global emergency
+    ts::next_tx(&mut scenario, ADMIN);
+    {
+        let mut vault = ts::take_shared<Vault<TestCoin>>(&scenario);
+        let admin_cap = ts::take_from_sender<LiquidityAdminCap>(&scenario);
+        vault::global_emergency_pause_for_test(&mut vault, &admin_cap);
+        ts::return_shared(vault);
+        ts::return_to_sender(&scenario, admin_cap);
+    };
+
+    // Attempt deposit by user should fail
+    ts::next_tx(&mut scenario, USER1);
+    create_user_account(&mut scenario, USER1);
+
+    ts::next_tx(&mut scenario, USER1);
+    {
+        let mut pool = ts::take_shared<LendingPool<TestCoin>>(&scenario);
+        let mut vault = ts::take_shared<Vault<TestCoin>>(&scenario);
+        let mut account = ts::take_from_sender<Account>(&scenario);
+        let account_cap = ts::take_from_sender<AccountCap>(&scenario);
+        let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+
+        let deposit_coin = coin::mint_for_testing<TestCoin>(INITIAL_DEPOSIT, ts::ctx(&mut scenario));
+        let ytok = lending_pool::deposit(&mut pool, &mut vault, &mut account, &account_cap, deposit_coin, &clock, ts::ctx(&mut scenario));
+        coin::burn_for_testing(ytok);
+
+        abort 999
+    }
+}
+
+/// Global emergency: withdraw should be blocked by vault emergency pause
+#[test]
+#[expected_failure(abort_code = 9003, location = olend::lending_pool)]
+fun test_withdraw_blocked_by_vault_global_emergency() {
+    let mut scenario = ts::begin(ADMIN);
+    setup_complete_environment(&mut scenario);
+    create_test_pool_and_vault(&mut scenario);
+
+    // Create user and deposit to get shares
+    ts::next_tx(&mut scenario, USER1);
+    create_user_account(&mut scenario, USER1);
+
+    ts::next_tx(&mut scenario, USER1);
+    {
+        let mut pool = ts::take_shared<LendingPool<TestCoin>>(&scenario);
+        let mut vault = ts::take_shared<Vault<TestCoin>>(&scenario);
+        let mut account = ts::take_from_sender<Account>(&scenario);
+        let account_cap = ts::take_from_sender<AccountCap>(&scenario);
+        let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+
+        let deposit_coin = coin::mint_for_testing<TestCoin>(INITIAL_DEPOSIT, ts::ctx(&mut scenario));
+        let ytoken_coin = lending_pool::deposit(&mut pool, &mut vault, &mut account, &account_cap, deposit_coin, &clock, ts::ctx(&mut scenario));
+        // transfer shares back to USER1 inventory for later withdrawal attempt
+        transfer::public_transfer(ytoken_coin, USER1);
+
+        // Set emergency by admin
+        ts::return_shared(pool);
+        ts::return_shared(vault);
+        ts::return_to_sender(&scenario, account);
+        ts::return_to_sender(&scenario, account_cap);
+        clock::destroy_for_testing(clock);
+        // Admin sets emergency
+    };
+
+    ts::next_tx(&mut scenario, ADMIN);
+    {
+        let mut vault = ts::take_shared<Vault<TestCoin>>(&scenario);
+        let admin_cap = ts::take_from_sender<LiquidityAdminCap>(&scenario);
+        vault::global_emergency_pause_for_test(&mut vault, &admin_cap);
+        ts::return_shared(vault);
+        ts::return_to_sender(&scenario, admin_cap);
+    };
+
+    // Attempt withdraw by user with existing shares should fail
+    ts::next_tx(&mut scenario, USER1);
+    {
+        let mut pool = ts::take_shared<LendingPool<TestCoin>>(&scenario);
+        let mut vault = ts::take_shared<Vault<TestCoin>>(&scenario);
+        let mut account = ts::take_from_sender<Account>(&scenario);
+        let account_cap = ts::take_from_sender<AccountCap>(&scenario);
+        let ytoken_coin = ts::take_from_sender<Coin<YToken<TestCoin>>>(&scenario);
+        let clock = clock::create_for_testing(ts::ctx(&mut scenario));
+
+        let withdrawn = lending_pool::withdraw(&mut pool, &mut vault, &mut account, &account_cap, ytoken_coin, &clock, ts::ctx(&mut scenario));
+        coin::burn_for_testing(withdrawn);
+
+        abort 999
+    }
+}
+
 /// Test paused pool operations
 #[test]
 #[expected_failure(abort_code = 3002, location = olend::lending_pool)]
