@@ -3,6 +3,7 @@
 module olend::lending_pool;
 
 use std::type_name::{Self, TypeName};
+// use std::option; // Option<ID> for admin_cap_id_opt (not needed, std::option in prelude)
 use sui::table::{Self, Table};
 use sui::coin::{Self, Coin};
 use sui::clock::{Self, Clock};
@@ -13,6 +14,7 @@ use olend::errors;
 use olend::vault::{Self, Vault};
 use olend::ytoken::{YToken};
 use olend::account::{Self, Account, AccountCap};
+// removed unused liquidity import
 
 // ===== Struct Definitions =====
 
@@ -63,6 +65,8 @@ public struct LendingPool<phantom T> has key {
     max_deposit_limit: u64,
     /// Daily withdrawal limit
     daily_withdraw_limit: u64,
+    /// Optional admin cap id for permission verification (None in test helpers)
+    admin_cap_id_opt: option::Option<ID>,
     /// Pool configuration
     config: PoolConfig,
     /// Pool statistics
@@ -317,6 +321,7 @@ public fun create_lending_pool<T>(
         platform_fee_rate: 1000, // 10% default platform fee
         max_deposit_limit,
         daily_withdraw_limit,
+        admin_cap_id_opt: option::some(object::id(admin_cap)),
         config,
         stats,
         status: PoolStatus::Active,
@@ -360,6 +365,9 @@ public fun deposit<T>(
 ): Coin<YToken<T>> {
     // Verify pool version
     assert!(pool.version == constants::current_version(), errors::version_mismatch());
+    // Global emergency: block operations if registry is in emergency
+    // Note: require caller to pass a Registry ref in production; here we defensively abort if vault is globally paused
+    assert!(!vault::is_global_emergency_paused(vault), errors::system_maintenance());
     
     // Verify pool status allows deposits
     assert!(pool.status != PoolStatus::Inactive, EPoolPaused);
@@ -448,6 +456,8 @@ public fun withdraw<T>(
 ): Coin<T> {
     // Verify pool version
     assert!(pool.version == constants::current_version(), errors::version_mismatch());
+    // Global emergency: block operations
+    assert!(!vault::is_global_emergency_paused(vault), errors::system_maintenance());
     
     // Verify pool status allows withdrawals
     assert!(pool.status != PoolStatus::Inactive, EPoolPaused);
@@ -592,8 +602,11 @@ public fun pause_pool<T>(
     admin_cap: &LendingPoolAdminCap,
     clock: &Clock,
 ) {
-    // Verify admin permission (simplified - in production, verify through registry)
-    let _ = admin_cap;
+    // Verify admin permission if configured
+    if (option::is_some(&pool.admin_cap_id_opt)) {
+        let expected = *option::borrow(&pool.admin_cap_id_opt);
+        assert!(object::id(admin_cap) == expected, errors::unauthorized_access());
+    };
     
     // Update interest before pausing
     update_pool_interest(pool, clock);
@@ -623,8 +636,10 @@ public fun resume_pool<T>(
     admin_cap: &LendingPoolAdminCap,
     clock: &Clock,
 ) {
-    // Verify admin permission (simplified - in production, verify through registry)
-    let _ = admin_cap;
+    if (option::is_some(&pool.admin_cap_id_opt)) {
+        let expected = *option::borrow(&pool.admin_cap_id_opt);
+        assert!(object::id(admin_cap) == expected, errors::unauthorized_access());
+    };
     
     let old_status = match (pool.status) {
         PoolStatus::Active => 0,
@@ -651,8 +666,10 @@ public fun update_pool_config<T>(
     admin_cap: &LendingPoolAdminCap,
     new_config: PoolConfig,
 ) {
-    // Verify admin permission (simplified - in production, verify through registry)
-    let _ = admin_cap;
+    if (option::is_some(&pool.admin_cap_id_opt)) {
+        let expected = *option::borrow(&pool.admin_cap_id_opt);
+        assert!(object::id(admin_cap) == expected, errors::unauthorized_access());
+    };
     
     // Verify version
     assert!(pool.version == constants::current_version(), errors::version_mismatch());
@@ -669,8 +686,10 @@ public fun update_interest_rates<T>(
     fixed_rate: u64,
     clock: &Clock,
 ) {
-    // Verify admin permission (simplified - in production, verify through registry)
-    let _ = admin_cap;
+    if (option::is_some(&pool.admin_cap_id_opt)) {
+        let expected = *option::borrow(&pool.admin_cap_id_opt);
+        assert!(object::id(admin_cap) == expected, errors::unauthorized_access());
+    };
     
     // Verify version
     assert!(pool.version == constants::current_version(), errors::version_mismatch());
@@ -828,6 +847,7 @@ public fun create_pool_for_test<T>(
         platform_fee_rate: 1000, // 10%
         max_deposit_limit: 1_000_000_000,
         daily_withdraw_limit: 100_000_000,
+        admin_cap_id_opt: option::none<ID>(),
         config,
         stats,
         status: PoolStatus::Active,

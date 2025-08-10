@@ -214,13 +214,13 @@ public fun get_price<T>(
         };
     };
 
-    // If no valid cached price, we would fetch from Pyth here
-    // For now, return a placeholder that indicates we need Pyth integration
+    // If no valid cached price, return invalid placeholder to signal caller
+    // to perform explicit refresh via pyth_adapter before retrying.
     PriceInfo {
         price: 0,
         confidence: 0,
         timestamp: clock::timestamp_ms(clock) / 1000,
-        expo: 8, // 8 decimal places (stored as positive, interpreted as negative)
+        expo: constants::price_decimal_precision(),
         is_valid: false,
     }
 }
@@ -238,14 +238,17 @@ public(package) fun update_price_cache<T>(
 
     // Validate price data
     if (oracle.config.enable_validation) {
-        validate_price_data(oracle, &price_info, current_time);
+        validate_price_data(oracle, &price_info, current_time, asset_type);
     };
 
-    // Check for price manipulation
+    // Read old price BEFORE updating cache for event emission and manipulation check
+    let mut old_price_value = 0u64;
     if (table::contains(&oracle.price_cache, asset_type)) {
-        let old_price = table::borrow(&oracle.price_cache, asset_type);
-        if (old_price.is_valid) {
-            check_price_manipulation(oracle, old_price.price, price_info.price, asset_type);
+        let old_price_ref = table::borrow(&oracle.price_cache, asset_type);
+        if (old_price_ref.is_valid) {
+            old_price_value = old_price_ref.price;
+            // Check for price manipulation with proper timestamp
+            check_price_manipulation(oracle, old_price_value, price_info.price, asset_type, current_time);
         };
     };
 
@@ -260,12 +263,10 @@ public(package) fun update_price_cache<T>(
     // Emit price update event
     event::emit(PriceUpdateEvent {
         asset_type,
-        old_price: if (table::contains(&oracle.price_cache, asset_type)) {
-            table::borrow(&oracle.price_cache, asset_type).price
-        } else { 0 },
-        new_price: price_info.price,
+        old_price: old_price_value,
+        new_price: table::borrow(&oracle.price_cache, asset_type).price,
         timestamp: current_time,
-        confidence: price_info.confidence,
+        confidence: table::borrow(&oracle.price_cache, asset_type).confidence,
     });
 }
 
@@ -391,11 +392,12 @@ fun validate_price_data(
     oracle: &PriceOracle,
     price_info: &PriceInfo,
     current_time: u64,
+    asset_type: TypeName,
 ) {
     // Check if price data is not too old
     if (current_time - price_info.timestamp > oracle.max_price_delay) {
         event::emit(PriceValidationErrorEvent {
-            asset_type: type_name::get<u64>(), // Placeholder
+            asset_type,
             error_type: 1, // Stale data
             timestamp: current_time,
             details: b"Price data too old",
@@ -406,7 +408,7 @@ fun validate_price_data(
     // Check confidence level
     if (price_info.confidence < oracle.min_confidence) {
         event::emit(PriceValidationErrorEvent {
-            asset_type: type_name::get<u64>(), // Placeholder
+            asset_type,
             error_type: 2, // Low confidence
             timestamp: current_time,
             details: b"Price confidence too low",
@@ -421,6 +423,7 @@ fun check_price_manipulation(
     old_price: u64,
     new_price: u64,
     asset_type: TypeName,
+    current_time: u64,
 ) {
     if (old_price == 0) return; // Skip check for first price
 
@@ -434,7 +437,7 @@ fun check_price_manipulation(
         event::emit(PriceValidationErrorEvent {
             asset_type,
             error_type: 3, // Manipulation detected
-            timestamp: 0, // Will be set by caller
+            timestamp: current_time,
             details: b"Excessive price change detected",
         });
         abort EPriceManipulationDetected

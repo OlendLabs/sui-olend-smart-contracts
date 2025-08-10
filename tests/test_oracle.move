@@ -199,12 +199,12 @@ fun test_usd_conversion() {
         
         oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
         
-        // Cache BTC price at $50,000
+        // Cache BTC price at $50,000 using protocol decimal precision
         let price_info = oracle::create_price_info(
             50000_00000000, // $50,000
             98,
             clock::timestamp_ms(&clock) / 1000,
-            8,
+            olend::constants::price_decimal_precision(),
             true
         );
         

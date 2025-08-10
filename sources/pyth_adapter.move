@@ -3,6 +3,7 @@
 module olend::pyth_adapter;
 
 use std::type_name::{Self, TypeName};
+use olend::constants;
 use sui::clock::{Self, Clock};
 use sui::event;
 
@@ -71,26 +72,14 @@ public fun update_price_from_pyth<T>(
     });
 }
 
-/// Batch update prices for multiple assets from Pyth
+/// Batch update placeholder（无法对泛型逐个调用，保留以便将来代码生成器或具体资产包装器使用）
 public fun batch_update_prices_from_pyth(
     _oracle: &mut PriceOracle,
     _pyth_state: &PythState,
-    asset_types: vector<TypeName>,
+    _asset_types: vector<TypeName>,
     _clock: &Clock,
     _ctx: &TxContext
-) {
-    let mut i = 0;
-    let len = vector::length(&asset_types);
-    
-    while (i < len) {
-        let _asset_type = *vector::borrow(&asset_types, i);
-        
-        // For each asset type, we would need to call the appropriate update function
-        // This is a simplified version - in practice, we'd need type-specific calls
-        
-        i = i + 1;
-    };
-}
+) { }
 
 /// Get fresh price from Pyth without caching (for immediate use)
 /// Type parameter T is needed for future type-specific operations
@@ -131,16 +120,14 @@ fun convert_pyth_price_to_price_info(
     _pyth_price: PythPrice,
     _clock: &Clock,
 ): oracle::PriceInfo {
-    // For now, create a mock price info since we need to understand the Pyth API better
-    // In a real implementation, we would extract values from pyth_price
-    
-    // Create a mock price for development
+    // Simplified conversion placeholder: timestamp uses current clock,
+    // decimal precision aligns with protocol constant for consistency.
     oracle::create_price_info(
         50000_00000000, // $50,000 with 8 decimals
-        1000_00000000,  // $1,000 confidence interval  
-        1000000000,     // Mock timestamp
-        8,              // 8 decimal places
-        true            // Mark as valid
+        1000_00000000,  // $1,000 confidence interval
+        clock::timestamp_ms(_clock) / 1000, // current timestamp (seconds)
+        constants::price_decimal_precision(),
+        true
     )
 }
 
