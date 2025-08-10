@@ -197,6 +197,58 @@ public fun unauthorized_oracle_access(): u64 { EUnauthorizedOracleAccess }
 public fun invalid_oracle_config(): u64 { EInvalidOracleConfig }
 public fun price_cache_miss(): u64 { EPriceCacheMiss }
 
+// ===== Borrowing Pool Module Error Codes (4000-4099) =====
+
+/// Pool is paused
+const EBorrowingPoolPaused: u64 = 4001;
+
+/// Insufficient collateral
+const EInsufficientCollateral: u64 = 4002;
+
+/// Insufficient borrow amount
+const EInsufficientBorrow: u64 = 4003;
+
+/// Position not found
+const EPositionNotFound: u64 = 4004;
+
+/// Invalid pool configuration
+const EInvalidBorrowingPoolConfig: u64 = 4005;
+
+/// Borrowing not allowed
+const EBorrowingNotAllowed: u64 = 4006;
+
+/// Repayment not allowed
+const ERepaymentNotAllowed: u64 = 4007;
+
+/// Liquidation not allowed
+const ELiquidationNotAllowed: u64 = 4008;
+
+/// Borrow limit exceeded
+const EBorrowLimitExceeded: u64 = 4009;
+
+/// Collateral ratio too high (unsafe)
+const ECollateralRatioTooHigh: u64 = 4010;
+
+/// Position not liquidatable
+const EPositionNotLiquidatable: u64 = 4011;
+
+/// Invalid liquidation amount
+const EInvalidLiquidationAmount: u64 = 4012;
+
+/// Get Borrowing Pool-related error codes
+public fun borrowing_pool_paused(): u64 { EBorrowingPoolPaused }
+public fun insufficient_collateral(): u64 { EInsufficientCollateral }
+public fun insufficient_borrow(): u64 { EInsufficientBorrow }
+public fun position_not_found(): u64 { EPositionNotFound }
+public fun invalid_borrowing_pool_config(): u64 { EInvalidBorrowingPoolConfig }
+public fun borrowing_not_allowed(): u64 { EBorrowingNotAllowed }
+public fun repayment_not_allowed(): u64 { ERepaymentNotAllowed }
+public fun liquidation_not_allowed(): u64 { ELiquidationNotAllowed }
+public fun borrow_limit_exceeded(): u64 { EBorrowLimitExceeded }
+public fun collateral_ratio_too_high(): u64 { ECollateralRatioTooHigh }
+public fun position_not_liquidatable(): u64 { EPositionNotLiquidatable }
+public fun invalid_liquidation_amount(): u64 { EInvalidLiquidationAmount }
+
 /// Get general error codes
 public fun invalid_input(): u64 { EInvalidInput }
 public fun operation_denied(): u64 { EOperationDenied }

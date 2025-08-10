@@ -278,14 +278,19 @@
 
 实现借款池系统，支持高抵押率借款和多资产抵押。
 
-- [ ] 5.1 创建 BorrowingPool 核心结构
+- [x] 5.1 创建 BorrowingPool 核心结构
+
+
+
   - 创建 `sources/borrowing_pool.move` 模块
   - 定义 BorrowingPool<T> 结构体作为 Shared Object
   - 定义 BorrowPosition 借款头寸结构体
   - 定义 BorrowingPoolRegistry 管理多个借款池
   - _需求: 5.1, 5.2, 5.29_
 
-- [ ] 5.2 实现借款核心功能
+- [x] 5.2 实现借款核心功能
+
+
   - 实现 `borrow()` 函数，接收多个 Vault 引用作为参数
   - 通过 `vault::borrow()` (package权限) 借出资产
   - 实现抵押物存储和头寸创建
