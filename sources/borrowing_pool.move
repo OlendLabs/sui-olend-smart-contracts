@@ -7,6 +7,7 @@ use sui::table::{Self, Table};
 use sui::coin::{Self, Coin};
 use sui::clock::{Self, Clock};
 use sui::event;
+use sui::balance;
 
 use olend::constants;
 use olend::errors;
@@ -152,6 +153,10 @@ public struct BorrowPosition has key, store {
     borrower_account: ID,
     /// Pool ID this position belongs to
     pool_id: u64,
+    /// Collateral holder object id (shared object)
+    collateral_holder_id: ID,
+    /// Collateral vault id used for shares<->assets conversion checks
+    collateral_vault_id: ID,
     /// Collateral amount (for single collateral type initially)
     collateral_amount: u64,
     /// Collateral type name for tracking
@@ -178,8 +183,8 @@ public struct CollateralHolder<phantom C> has key, store {
     id: UID,
     /// Position ID this collateral belongs to
     position_id: ID,
-    /// YToken collateral
-    collateral: Coin<YToken<C>>,
+    /// YToken collateral balance (stored inside shared object)
+    collateral: balance::Balance<YToken<C>>,
 }
 
 // ===== Events =====
@@ -295,15 +300,14 @@ const TERM_TYPE_FIXED: u8 = 1;
 
 // ===== Creation and Initialization Functions =====
 
-/// Initialize the borrowing pool system
-/// Creates a shared BorrowingPoolRegistry and returns admin capability
-public fun initialize_borrowing_pools(ctx: &mut TxContext): BorrowingPoolAdminCap {
+/// Creates a new BorrowingPoolRegistry and its admin capability (not shared)
+/// Returns both so that callers can decide whether to publish or transfer
+fun create_registry(ctx: &mut TxContext): (BorrowingPoolRegistry, BorrowingPoolAdminCap) {
     let admin_cap = BorrowingPoolAdminCap {
         id: object::new(ctx),
     };
-    
     let admin_cap_id = object::id(&admin_cap);
-    
+
     let registry = BorrowingPoolRegistry {
         id: object::new(ctx),
         version: constants::current_version(),
@@ -312,7 +316,23 @@ public fun initialize_borrowing_pools(ctx: &mut TxContext): BorrowingPoolAdminCa
         pool_counter: 0,
         admin_cap_id,
     };
-    
+
+    (registry, admin_cap)
+}
+
+/// Module initialization function
+/// Creates and shares the BorrowingPoolRegistry, and transfers admin cap to sender
+fun init(ctx: &mut TxContext) {
+    let (registry, admin_cap) = create_registry(ctx);
+    transfer::share_object(registry);
+    transfer::transfer(admin_cap, tx_context::sender(ctx));
+}
+
+/// Initialize the borrowing pool system
+/// Creates a shared BorrowingPoolRegistry and returns admin capability
+public(package) fun initialize_borrowing_pools(ctx: &mut TxContext): BorrowingPoolAdminCap {
+    // Backward-compatible helper: share registry and return admin cap
+    let (registry, admin_cap) = create_registry(ctx);
     transfer::share_object(registry);
     admin_cap
 }
@@ -444,7 +464,7 @@ public fun create_borrowing_pool<T>(
 public fun borrow<T, C>(
     pool: &mut BorrowingPool<T>,
     borrow_vault: &mut Vault<T>,
-    _collateral_vault: &mut Vault<C>,
+    collateral_vault: &mut Vault<C>,
     account: &mut Account,
     account_cap: &AccountCap,
     collateral: Coin<YToken<C>>,
@@ -469,7 +489,10 @@ public fun borrow<T, C>(
     
     // Verify user identity through account system
     assert!(account::verify_account_cap(account, account_cap), errors::account_cap_mismatch());
+    // Ensure collateral vault is active for valid conversion
+    assert!(vault::is_vault_active(collateral_vault), errors::invalid_assets());
     
+    // Collateral in shares (YToken amount)
     let collateral_amount = coin::value(&collateral);
     
     // Validate input amounts
@@ -490,12 +513,36 @@ public fun borrow<T, C>(
     assert!(oracle::price_info_is_valid(&borrow_asset_price_info), errors::price_validation_failed());
     assert!(oracle::price_info_is_valid(&collateral_asset_price_info), errors::price_validation_failed());
     
-    let borrow_asset_price = oracle::price_info_price(&borrow_asset_price_info);
-    let collateral_asset_price = oracle::price_info_price(&collateral_asset_price_info);
+    // Freshness check using default max delay to avoid stale data
+    let now = clock::timestamp_ms(clock) / 1000;
+    let borrow_price_time = oracle::price_info_timestamp(&borrow_asset_price_info);
+    let collateral_price_time = oracle::price_info_timestamp(&collateral_asset_price_info);
+    assert!(now - borrow_price_time <= constants::default_max_price_delay(), errors::price_validation_failed());
+    assert!(now - collateral_price_time <= constants::default_max_price_delay(), errors::price_validation_failed());
     
-    // Calculate collateral value and borrow value in USD
-    let collateral_value_usd = (collateral_amount * collateral_asset_price) / (10u64.pow(constants::price_decimal_precision()));
-    let borrow_value_usd = (borrow_amount * borrow_asset_price) / (10u64.pow(constants::price_decimal_precision()));
+    let borrow_asset_price_raw = oracle::price_info_price(&borrow_asset_price_info);
+    let collateral_asset_price_raw = oracle::price_info_price(&collateral_asset_price_info);
+    let borrow_conf = oracle::price_info_confidence(&borrow_asset_price_info);
+    let collateral_conf = oracle::price_info_confidence(&collateral_asset_price_info);
+    
+    // Apply conservative discount using confidence interval
+    let borrow_asset_price = if (borrow_asset_price_raw > borrow_conf) { borrow_asset_price_raw - borrow_conf } else { 0 };
+    let collateral_asset_price = if (collateral_asset_price_raw > collateral_conf) { collateral_asset_price_raw - collateral_conf } else { 0 };
+    assert!(borrow_asset_price > 0 && collateral_asset_price > 0, errors::price_validation_failed());
+    
+    // Convert YToken shares to underlying asset amount using the vault's current ratio
+    let collateral_assets = vault::convert_to_assets(collateral_vault, collateral_amount);
+    // Ensure conversion yielded non-zero assets to avoid division by zero and false safety
+    assert!(collateral_assets > 0, EInsufficientCollateral);
+    
+    // Price scale based on oracle price precision
+    let price_scale: u64 = pow10(constants::price_decimal_precision());
+    
+    // Calculate collateral value and borrow value in USD using safe order to reduce overflow risk
+    let collateral_value_usd = (collateral_assets * collateral_asset_price) / price_scale;
+    let borrow_value_usd = (borrow_amount * borrow_asset_price) / price_scale;
+    // Avoid division by zero in LTV calculation
+    assert!(collateral_value_usd > 0, EInsufficientCollateral);
     
     // Calculate collateral ratio (LTV)
     let collateral_ratio = (borrow_value_usd * BASIS_POINTS) / collateral_value_usd;
@@ -506,18 +553,30 @@ public fun borrow<T, C>(
     // Borrow assets from vault (package-level call)
     let borrowed_asset = vault::borrow(borrow_vault, borrow_amount, ctx);
     
-    // Store collateral YToken (we keep it as YToken, not convert to underlying asset)
-    // The collateral will be held by the position, not deposited back to vault
-    
-    // Create borrow position
+    // Create borrow position first (to bind collateral holder)
     let position_uid = object::new(ctx);
     let position_id = object::uid_to_inner(&position_uid);
     
+    // Move collateral coin into a balance stored in a shared holder object
+    let collateral_balance = coin::into_balance(collateral);
+    let collateral_holder = CollateralHolder<C> {
+        id: object::new(ctx),
+        position_id,
+        collateral: collateral_balance,
+    };
+    let collateral_holder_id = object::id(&collateral_holder);
+    
+    // Share the collateral holder as a shared object managed by protocol
+    transfer::share_object(collateral_holder);
+    
+    // Create borrow position with reference to the collateral holder id
     let position = BorrowPosition {
         id: position_uid,
         position_id,
         borrower_account: object::id(account),
         pool_id: pool.pool_id,
+        collateral_holder_id: collateral_holder_id,
+        collateral_vault_id: object::id(collateral_vault),
         collateral_amount,
         collateral_type: type_name::get<C>(),
         borrowed_amount: borrow_amount,
@@ -528,16 +587,6 @@ public fun borrow<T, C>(
         maturity_time: option::none(),
         status: POSITION_STATUS_ACTIVE,
     };
-    
-    // Create collateral holder
-    let collateral_holder = CollateralHolder<C> {
-        id: object::new(ctx),
-        position_id,
-        collateral,
-    };
-    
-    // Transfer collateral holder to user (they own the collateral)
-    transfer::public_transfer(collateral_holder, tx_context::sender(ctx));
     
     // Update pool statistics
     pool.total_borrowed = pool.total_borrowed + borrow_amount;
@@ -567,6 +616,56 @@ public fun borrow<T, C>(
     });
     
     (borrowed_asset, position)
+}
+
+/// Claim collateral after the position is fully repaid (status == CLOSED)
+/// Caller must be the original borrower and must provide the correct collateral holder
+public fun claim_collateral<C>(
+    account: &mut Account,
+    account_cap: &AccountCap,
+    position: &mut BorrowPosition,
+    collateral_holder: &mut CollateralHolder<C>,
+    collateral_vault: &Vault<C>,
+    ctx: &mut TxContext
+): Coin<YToken<C>> {
+    // Verify caller identity
+    assert!(account::verify_account_cap(account, account_cap), errors::account_cap_mismatch());
+    // Position ownership and status checks
+    assert!(position.borrower_account == object::id(account), errors::unauthorized_operation());
+    assert!(position.status == POSITION_STATUS_CLOSED, errors::unauthorized_operation());
+    // Ensure the provided holder matches the position
+    assert!(position.collateral_holder_id == object::id(collateral_holder), errors::unauthorized_operation());
+    // Ensure the provided vault matches the one used at borrow time
+    assert!(position.collateral_vault_id == object::id(collateral_vault), errors::unauthorized_operation());
+    // Ensure type matches stored collateral type
+    assert!(position.collateral_type == type_name::get<C>(), errors::unauthorized_operation());
+
+    // Withdraw entire collateral balance and return as Coin back to caller
+    let shares = balance::value(&collateral_holder.collateral);
+    // Ensure shares equal to originally locked shares
+    assert!(shares == position.collateral_amount, errors::invalid_assets());
+    let withdraw_balance = balance::split(&mut collateral_holder.collateral, shares);
+    let collateral_coin = coin::from_balance(withdraw_balance, ctx);
+    collateral_coin
+}
+
+/// Convenience function: repay full debt and immediately claim original YToken collateral
+/// Requires providing the concrete collateral type and holder
+public fun repay_and_claim<T, C>(
+    pool: &mut BorrowingPool<T>,
+    vault: &mut Vault<T>,
+    account: &mut Account,
+    account_cap: &AccountCap,
+    position: &mut BorrowPosition,
+    collateral_holder: &mut CollateralHolder<C>,
+    collateral_vault: &Vault<C>,
+    repay_asset: Coin<T>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<YToken<C>> {
+    let closed = repay<T>(pool, vault, account, account_cap, position, repay_asset, clock, ctx);
+    assert!(closed, errors::operation_denied());
+    claim_collateral<C>(account, account_cap, position, collateral_holder, collateral_vault, ctx)
 }
 
 /// Repay borrowed assets and retrieve collateral
@@ -609,8 +708,11 @@ public fun repay<T>(
     update_pool_interest(pool, clock);
     update_position_interest(position, pool, clock);
     
+    // Snapshot amounts before mutation
+    let original_principal = position.borrowed_amount;
+    let original_interest = position.accrued_interest;
     // Calculate total debt (principal + accrued interest)
-    let total_debt = position.borrowed_amount + position.accrued_interest;
+    let total_debt = original_principal + original_interest;
     
     // Determine actual repayment amount (cannot exceed total debt)
     let actual_repay_amount = if (repay_amount >= total_debt) {
@@ -656,9 +758,13 @@ public fun repay<T>(
         };
     };
     
-    // Update pool statistics
-    if (pool.total_borrowed >= actual_repay_amount) {
-        pool.total_borrowed = pool.total_borrowed - actual_repay_amount;
+    // Update pool statistics: subtract only principal portion repaid
+    let principal_repaid_for_pool = if (actual_repay_amount > original_interest) {
+        let repay_principal_part = actual_repay_amount - original_interest;
+        if (repay_principal_part > original_principal) { original_principal } else { repay_principal_part }
+    } else { 0 };
+    if (pool.total_borrowed >= principal_repaid_for_pool) {
+        pool.total_borrowed = pool.total_borrowed - principal_repaid_for_pool;
     } else {
         pool.total_borrowed = 0;
     };
@@ -846,6 +952,24 @@ public fun borrowing_allowed<T>(pool: &BorrowingPool<T>): bool {
 public fun repayment_allowed<T>(pool: &BorrowingPool<T>): bool {
     pool.config.repayment_enabled &&
     (pool.status == BorrowingPoolStatus::Active || pool.status == BorrowingPoolStatus::RepaymentOnly)
+}
+
+// ===== Utility Functions =====
+
+/// Compute 10^exp for small exp (u8) to derive price scale dynamically
+fun pow10(exp: u8): u64 {
+    let mut i: u8 = 0;
+    let mut result: u64 = 1;
+    while (i < exp) {
+        result = result * 10;
+        i = i + 1;
+    };
+    result
+}
+
+/// Get the collateral holder object id stored in a position
+public fun get_collateral_holder_id(position: &BorrowPosition): ID {
+    position.collateral_holder_id
 }
 
 // ===== Registry Query Functions =====
