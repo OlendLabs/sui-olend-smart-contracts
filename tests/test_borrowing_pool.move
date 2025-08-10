@@ -1,7 +1,5 @@
 /// Test module for BorrowingPool functionality
 /// Tests the core borrowing pool structure and basic operations
-#[test_only]
-#[allow(unused_use, unused_const)]
 module olend::test_borrowing_pool;
 
 use sui::test_scenario::{Self as test, Scenario, next_tx, ctx};

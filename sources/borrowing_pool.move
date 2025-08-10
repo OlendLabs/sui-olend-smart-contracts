@@ -67,6 +67,10 @@ public struct BorrowingPool<phantom T> has key {
     active_positions: u64,
     /// Tick liquidation configuration
     tick_config: TickLiquidationConfig,
+    /// High collateral ratio configuration
+    high_collateral_config: HighCollateralConfig,
+    /// Risk monitoring configuration
+    risk_monitoring_config: RiskMonitoringConfig,
     /// Maximum single borrow limit
     max_borrow_limit: u64,
     /// Optional admin cap id for permission verification
@@ -89,6 +93,32 @@ public struct TickLiquidationConfig has store, copy, drop {
     liquidation_reward: u64,
     /// Maximum liquidation ratio per operation (in basis points)
     max_liquidation_ratio: u64,
+}
+
+/// High collateral ratio configuration for different asset types
+public struct HighCollateralConfig has store, copy, drop {
+    /// Maximum LTV for BTC (in basis points, e.g., 9700 = 97%)
+    btc_max_ltv: u64,
+    /// Maximum LTV for ETH (in basis points, e.g., 9500 = 95%)
+    eth_max_ltv: u64,
+    /// Maximum LTV for other assets (in basis points, e.g., 9000 = 90%)
+    default_max_ltv: u64,
+    /// User level bonus LTV (in basis points, e.g., 200 = 2% for diamond users)
+    level_bonus_ltv: u64,
+    /// Enable dynamic LTV adjustment based on market conditions
+    dynamic_ltv_enabled: bool,
+}
+
+/// Risk monitoring configuration
+public struct RiskMonitoringConfig has store, copy, drop {
+    /// Price change threshold for risk alerts (in basis points)
+    price_change_threshold: u64,
+    /// Monitoring interval in seconds
+    monitoring_interval: u64,
+    /// Auto-liquidation enabled
+    auto_liquidation_enabled: bool,
+    /// Risk alert enabled
+    risk_alert_enabled: bool,
 }
 
 /// Borrowing pool configuration parameters
@@ -208,17 +238,7 @@ public struct RepayEvent has copy, drop {
     timestamp: u64,
 }
 
-/// Liquidation event
-public struct LiquidationEvent has copy, drop {
-    pool_id: u64,
-    liquidator: address,
-    borrower: address,
-    position_id: ID,
-    collateral_liquidated: u64,
-    debt_repaid: u64,
-    penalty_amount: u64,
-    timestamp: u64,
-}
+// LiquidationEvent removed (unused)
 
 /// Interest accrual event
 public struct InterestAccrualEvent has copy, drop {
@@ -228,11 +248,34 @@ public struct InterestAccrualEvent has copy, drop {
     timestamp: u64,
 }
 
-/// Pool status change event
-public struct PoolStatusChangeEvent has copy, drop {
+// PoolStatusChangeEvent removed (unused)
+
+/// High collateral ratio warning event
+public struct HighCollateralWarningEvent has copy, drop {
     pool_id: u64,
-    old_status: u8,
-    new_status: u8,
+    position_id: ID,
+    borrower: address,
+    current_ltv: u64,
+    warning_ltv: u64,
+    timestamp: u64,
+}
+
+/// Collateral ratio update event
+public struct CollateralRatioUpdateEvent has copy, drop {
+    pool_id: u64,
+    position_id: ID,
+    borrower: address,
+    old_ltv: u64,
+    new_ltv: u64,
+    timestamp: u64,
+}
+
+/// Risk monitoring alert event
+public struct RiskMonitoringAlertEvent has copy, drop {
+    pool_id: u64,
+    alert_type: u8, // 0: price change, 1: high ltv, 2: liquidation risk
+    position_id: option::Option<ID>,
+    details: vector<u8>,
     timestamp: u64,
 }
 
@@ -259,8 +302,7 @@ const EBorrowingNotAllowed: u64 = 4006;
 /// Repayment not allowed
 const ERepaymentNotAllowed: u64 = 4007;
 
-/// Liquidation not allowed
-const ELiquidationNotAllowed: u64 = 4008;
+// Removed ELiquidationNotAllowed (unused)
 
 /// Borrow limit exceeded
 const EBorrowLimitExceeded: u64 = 4009;
@@ -268,11 +310,7 @@ const EBorrowLimitExceeded: u64 = 4009;
 /// Collateral ratio too high (unsafe)
 const ECollateralRatioTooHigh: u64 = 4010;
 
-/// Position not liquidatable
-const EPositionNotLiquidatable: u64 = 4011;
-
-/// Invalid liquidation amount
-const EInvalidLiquidationAmount: u64 = 4012;
+// Removed liquidation-related error codes (unused)
 
 // ===== Interest Model Constants =====
 
@@ -288,15 +326,75 @@ const BASIS_POINTS: u64 = 10000;
 /// Seconds per year for APR calculation
 const SECONDS_PER_YEAR: u64 = 31536000;
 
+/// Arithmetic overflow error
+const EArithmeticOverflow: u64 = 4013;
+
+/// Invalid vault exchange rate
+const EInvalidExchangeRate: u64 = 4014;
+
 /// Position status constants
 const POSITION_STATUS_ACTIVE: u8 = 0;
-const POSITION_STATUS_LIQUIDATABLE: u8 = 1;
-const POSITION_STATUS_LIQUIDATED: u8 = 2;
 const POSITION_STATUS_CLOSED: u8 = 3;
 
 /// Term type constants
 const TERM_TYPE_INDEFINITE: u8 = 0;
-const TERM_TYPE_FIXED: u8 = 1;
+
+/// Maximum reasonable exchange rate (10x) to prevent manipulation
+const MAX_REASONABLE_EXCHANGE_RATE: u64 = 10_0000_0000; // 10.0 with 8 decimal places
+
+/// Minimum reasonable exchange rate (0.1x) to prevent manipulation  
+const MIN_REASONABLE_EXCHANGE_RATE: u64 = 10000000; // 0.1 with 8 decimal places
+
+// ===== Helper Functions =====
+
+/// Calculate 10^n for price scaling
+fun pow10(n: u8): u64 {
+    let mut result = 1;
+    let mut i = 0;
+    while (i < n) {
+        result = result * 10;
+        i = i + 1;
+    };
+    result
+}
+
+/// Validate vault exchange rate to prevent manipulation
+/// Checks that the exchange rate is within reasonable bounds
+fun validate_vault_exchange_rate<C>(vault: &Vault<C>, collateral_amount: u64): u64 {
+    // Get vault statistics for exchange rate calculation
+    let total_assets = vault::total_assets(vault);
+    let total_shares = vault::total_supply(vault);
+    
+    // Avoid division by zero
+    if (total_shares == 0) {
+        return 0
+    };
+    
+    // Calculate exchange rate: assets per share (scaled by 8 decimal places)
+    let exchange_rate = if (total_assets > 0) {
+        (total_assets * 100000000) / total_shares // Scale by 10^8 for precision
+    } else {
+        100000000 // 1.0 when no assets
+    };
+    
+    // Validate exchange rate is within reasonable bounds
+    assert!(exchange_rate >= MIN_REASONABLE_EXCHANGE_RATE, EInvalidExchangeRate);
+    assert!(exchange_rate <= MAX_REASONABLE_EXCHANGE_RATE, EInvalidExchangeRate);
+    
+    // Convert collateral shares to assets using validated rate
+    let collateral_assets = vault::convert_to_assets(vault, collateral_amount);
+    
+    // Additional sanity check: conversion should be consistent with rate
+    let expected_assets = (collateral_amount * exchange_rate) / 100000000;
+    let rate_tolerance = expected_assets / 100; // 1% tolerance
+    assert!(
+        collateral_assets >= expected_assets - rate_tolerance && 
+        collateral_assets <= expected_assets + rate_tolerance,
+        EInvalidExchangeRate
+    );
+    
+    collateral_assets
+}
 
 // ===== Creation and Initialization Functions =====
 
@@ -386,6 +484,23 @@ public fun create_borrowing_pool<T>(
         max_liquidation_ratio: 1000, // 10% max liquidation per operation
     };
     
+    // Create high collateral configuration
+    let high_collateral_config = HighCollateralConfig {
+        btc_max_ltv: 9700, // 97% for BTC
+        eth_max_ltv: 9500, // 95% for ETH
+        default_max_ltv: 9000, // 90% for other assets
+        level_bonus_ltv: 200, // 2% bonus for high-level users
+        dynamic_ltv_enabled: true,
+    };
+    
+    // Create risk monitoring configuration
+    let risk_monitoring_config = RiskMonitoringConfig {
+        price_change_threshold: 500, // 5% price change threshold
+        monitoring_interval: 300, // 5 minutes
+        auto_liquidation_enabled: true,
+        risk_alert_enabled: true,
+    };
+    
     // Create pool configuration
     let config = BorrowingPoolConfig {
         min_borrow: 1, // Minimum 1 unit
@@ -425,6 +540,8 @@ public fun create_borrowing_pool<T>(
         total_borrowed: 0,
         active_positions: 0,
         tick_config,
+        high_collateral_config,
+        risk_monitoring_config,
         max_borrow_limit,
         admin_cap_id_opt: option::some(object::id(admin_cap)),
         config,
@@ -454,11 +571,230 @@ public fun create_borrowing_pool<T>(
     pool_object_id
 }
 
+// ===== High Collateral Ratio Management Functions =====
+
+/// Calculate the maximum LTV for a specific asset type and user level
+public fun calculate_max_ltv_for_asset<T, C>(
+    pool: &BorrowingPool<T>,
+    account: &Account,
+) : u64 {
+    let base_max_ltv = get_asset_max_ltv<T, C>(pool);
+    
+    // Apply user level bonus if enabled
+    if (pool.high_collateral_config.dynamic_ltv_enabled) {
+        let user_level = account::get_level(account);
+        let level_bonus = calculate_level_bonus_ltv(user_level, pool.high_collateral_config.level_bonus_ltv);
+        base_max_ltv + level_bonus
+    } else {
+        base_max_ltv
+    }
+}
+
+/// Get the base maximum LTV for a specific asset type
+fun get_asset_max_ltv<T, C>(pool: &BorrowingPool<T>): u64 {
+    let asset_type = type_name::get<C>();
+    let asset_name_bytes = std::ascii::into_bytes(type_name::into_string(asset_type));
+    
+    // Check if it's BTC
+    if (vector::length(&asset_name_bytes) >= 3) {
+        let btc_check = b"BTC";
+        if (contains_substring(&asset_name_bytes, &btc_check)) {
+            return pool.high_collateral_config.btc_max_ltv
+        };
+    };
+    
+    // Check if it's ETH
+    if (vector::length(&asset_name_bytes) >= 3) {
+        let eth_check = b"ETH";
+        if (contains_substring(&asset_name_bytes, &eth_check)) {
+            return pool.high_collateral_config.eth_max_ltv
+        };
+    };
+    
+    // Default for other assets
+    pool.high_collateral_config.default_max_ltv
+}
+
+/// Calculate level bonus LTV based on user level
+fun calculate_level_bonus_ltv(user_level: u8, max_bonus: u64): u64 {
+    // Level 0-2: No bonus
+    // Level 3-4: 50% of max bonus (1% if max is 2%)
+    // Level 5+: Full bonus (2% if max is 2%)
+    if (user_level >= 5) {
+        max_bonus
+    } else if (user_level >= 3) {
+        max_bonus / 2
+    } else {
+        0
+    }
+}
+
+/// Check if a substring exists in a vector<u8>
+fun contains_substring(haystack: &vector<u8>, needle: &vector<u8>): bool {
+    let haystack_len = vector::length(haystack);
+    let needle_len = vector::length(needle);
+    
+    if (needle_len > haystack_len) {
+        return false
+    };
+    
+    let mut i = 0;
+    while (i <= haystack_len - needle_len) {
+        let mut j = 0;
+        let mut found = true;
+        
+        while (j < needle_len) {
+            if (*vector::borrow(haystack, i + j) != *vector::borrow(needle, j)) {
+                found = false;
+                break
+            };
+            j = j + 1;
+        };
+        
+        if (found) {
+            return true
+        };
+        i = i + 1;
+    };
+    
+    false
+}
+
+/// Calculate current collateral ratio for a position
+public fun calculate_position_ltv<T, C>(
+    pool: &BorrowingPool<T>,
+    position: &BorrowPosition,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+): u64 {
+    // Get current prices
+    let borrow_asset_price_info = oracle::get_price<T>(oracle, clock);
+    let collateral_asset_price_info = oracle::get_price<C>(oracle, clock);
+    
+    // Verify price data is valid and fresh
+    assert!(oracle::price_info_is_valid(&borrow_asset_price_info), errors::price_validation_failed());
+    assert!(oracle::price_info_is_valid(&collateral_asset_price_info), errors::price_validation_failed());
+    
+    let now = clock::timestamp_ms(clock) / 1000;
+    let borrow_price_time = oracle::price_info_timestamp(&borrow_asset_price_info);
+    let collateral_price_time = oracle::price_info_timestamp(&collateral_asset_price_info);
+    assert!(now - borrow_price_time <= constants::default_max_price_delay(), errors::price_validation_failed());
+    assert!(now - collateral_price_time <= constants::default_max_price_delay(), errors::price_validation_failed());
+    
+    let borrow_asset_price_raw = oracle::price_info_price(&borrow_asset_price_info);
+    let collateral_asset_price_raw = oracle::price_info_price(&collateral_asset_price_info);
+    let borrow_conf = oracle::price_info_confidence(&borrow_asset_price_info);
+    let collateral_conf = oracle::price_info_confidence(&collateral_asset_price_info);
+    
+    // Apply conservative discount using confidence interval
+    let borrow_asset_price = if (borrow_asset_price_raw > borrow_conf) { borrow_asset_price_raw - borrow_conf } else { 0 };
+    let collateral_asset_price = if (collateral_asset_price_raw > collateral_conf) { collateral_asset_price_raw - collateral_conf } else { 0 };
+    assert!(borrow_asset_price > 0 && collateral_asset_price > 0, errors::price_validation_failed());
+    
+    // Convert YToken shares to underlying asset amount with exchange rate validation
+    let collateral_assets = validate_vault_exchange_rate(collateral_vault, position.collateral_amount);
+    assert!(collateral_assets > 0, EInsufficientCollateral);
+    
+    // Calculate total debt (principal + accrued interest)
+    let total_debt = position.borrowed_amount + position.accrued_interest;
+    
+    // Price scale based on oracle price precision
+    let price_scale: u64 = pow10(constants::price_decimal_precision());
+    
+    // Calculate values in USD
+    let collateral_value_usd = (collateral_assets * collateral_asset_price) / price_scale;
+    let debt_value_usd = (total_debt * borrow_asset_price) / price_scale;
+    
+    // Avoid division by zero
+    assert!(collateral_value_usd > 0, EInsufficientCollateral);
+    
+    // Calculate LTV: debt_value / collateral_value * 100%
+    (debt_value_usd * BASIS_POINTS) / collateral_value_usd
+}
+
+/// Monitor position risk and emit warnings if necessary
+public fun monitor_position_risk<T, C>(
+    pool: &BorrowingPool<T>,
+    position: &BorrowPosition,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+) {
+    if (!pool.risk_monitoring_config.risk_alert_enabled) {
+        return
+    };
+    
+    let current_ltv = calculate_position_ltv<T, C>(pool, position, collateral_vault, oracle, clock);
+    let timestamp = clock::timestamp_ms(clock) / 1000;
+    
+    // Check if position is approaching warning threshold
+    if (current_ltv >= pool.warning_ltv && current_ltv < pool.liquidation_ltv) {
+        event::emit(HighCollateralWarningEvent {
+            pool_id: pool.pool_id,
+            position_id: position.position_id,
+            borrower: object::id_to_address(&position.borrower_account),
+            current_ltv,
+            warning_ltv: pool.warning_ltv,
+            timestamp,
+        });
+    };
+    
+    // Check if position is at liquidation risk
+    if (current_ltv >= pool.liquidation_ltv) {
+        event::emit(RiskMonitoringAlertEvent {
+            pool_id: pool.pool_id,
+            alert_type: 2, // liquidation risk
+            position_id: option::some(position.position_id),
+            details: b"Position at liquidation risk",
+            timestamp,
+        });
+    };
+}
+
+/// Update position LTV and emit events if significant change
+public fun update_position_ltv_tracking<T, C>(
+    pool: &BorrowingPool<T>,
+    position: &mut BorrowPosition,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+) {
+    let old_ltv = if (position.borrowed_amount > 0) {
+        // Calculate old LTV based on stored values (approximation)
+        let old_debt = position.borrowed_amount + position.accrued_interest;
+        let collateral_assets = vault::convert_to_assets(collateral_vault, position.collateral_amount);
+        if (collateral_assets > 0) {
+            (old_debt * BASIS_POINTS) / collateral_assets // Simplified calculation
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    
+    let new_ltv = calculate_position_ltv<T, C>(pool, position, collateral_vault, oracle, clock);
+    
+    // Emit event if LTV changed significantly (more than 1%)
+    if (new_ltv > old_ltv + 100 || old_ltv > new_ltv + 100) {
+        event::emit(CollateralRatioUpdateEvent {
+            pool_id: pool.pool_id,
+            position_id: position.position_id,
+            borrower: object::id_to_address(&position.borrower_account),
+            old_ltv,
+            new_ltv,
+            timestamp: clock::timestamp_ms(clock) / 1000,
+        });
+    };
+    
+    // Monitor risk
+    monitor_position_risk<T, C>(pool, position, collateral_vault, oracle, clock);
+}
+
 // ===== Core Borrowing Functions =====
 
 /// Borrow assets from the pool using YToken collateral
 /// Creates a new borrow position or updates existing one
-#[allow(lint(self_transfer))]
 public fun borrow<T, C>(
     pool: &mut BorrowingPool<T>,
     borrow_vault: &mut Vault<T>,
@@ -528,8 +864,8 @@ public fun borrow<T, C>(
     let collateral_asset_price = if (collateral_asset_price_raw > collateral_conf) { collateral_asset_price_raw - collateral_conf } else { 0 };
     assert!(borrow_asset_price > 0 && collateral_asset_price > 0, errors::price_validation_failed());
     
-    // Convert YToken shares to underlying asset amount using the vault's current ratio
-    let collateral_assets = vault::convert_to_assets(collateral_vault, collateral_amount);
+    // Convert YToken shares to underlying asset amount with exchange rate validation
+    let collateral_assets = validate_vault_exchange_rate(collateral_vault, collateral_amount);
     // Ensure conversion yielded non-zero assets to avoid division by zero and false safety
     assert!(collateral_assets > 0, EInsufficientCollateral);
     
@@ -545,8 +881,12 @@ public fun borrow<T, C>(
     // Calculate collateral ratio (LTV)
     let collateral_ratio = (borrow_value_usd * BASIS_POINTS) / collateral_value_usd;
     
-    // Verify collateral ratio is within safe limits
-    assert!(collateral_ratio <= pool.initial_ltv, ECollateralRatioTooHigh);
+    // Calculate maximum allowed LTV for this asset type and user level
+    let max_allowed_ltv = calculate_max_ltv_for_asset<T, C>(pool, account);
+    
+    // Verify collateral ratio is within safe limits (use the higher of initial_ltv or max_allowed_ltv)
+    let effective_max_ltv = if (max_allowed_ltv > pool.initial_ltv) { max_allowed_ltv } else { pool.initial_ltv };
+    assert!(collateral_ratio <= effective_max_ltv, ECollateralRatioTooHigh);
     
     // Borrow assets from vault (package-level call)
     let borrowed_asset = vault::borrow(borrow_vault, borrow_amount, ctx);
@@ -668,7 +1008,6 @@ public fun repay_and_claim<T, C>(
 
 /// Repay borrowed assets and retrieve collateral
 /// Supports partial and full repayment
-#[allow(lint(self_transfer))]
 public fun repay<T>(
     pool: &mut BorrowingPool<T>,
     vault: &mut Vault<T>,
@@ -798,6 +1137,85 @@ public fun repay<T>(
     position.status == POSITION_STATUS_CLOSED
 }
 
+// ===== High Collateral Ratio Configuration Management =====
+
+/// Update high collateral configuration (admin only)
+public fun update_high_collateral_config<T>(
+    pool: &mut BorrowingPool<T>,
+    admin_cap: &BorrowingPoolAdminCap,
+    btc_max_ltv: u64,
+    eth_max_ltv: u64,
+    default_max_ltv: u64,
+    level_bonus_ltv: u64,
+    dynamic_ltv_enabled: bool,
+) {
+    // Verify admin permission
+    assert!(
+        pool.admin_cap_id_opt == option::some(object::id(admin_cap)),
+        errors::unauthorized_access()
+    );
+    
+    // Validate parameters
+    assert!(btc_max_ltv <= BASIS_POINTS, EInvalidPoolConfig);
+    assert!(eth_max_ltv <= BASIS_POINTS, EInvalidPoolConfig);
+    assert!(default_max_ltv <= BASIS_POINTS, EInvalidPoolConfig);
+    assert!(level_bonus_ltv <= 500, EInvalidPoolConfig); // Max 5% bonus
+    
+    // Update configuration
+    pool.high_collateral_config.btc_max_ltv = btc_max_ltv;
+    pool.high_collateral_config.eth_max_ltv = eth_max_ltv;
+    pool.high_collateral_config.default_max_ltv = default_max_ltv;
+    pool.high_collateral_config.level_bonus_ltv = level_bonus_ltv;
+    pool.high_collateral_config.dynamic_ltv_enabled = dynamic_ltv_enabled;
+}
+
+/// Update risk monitoring configuration (admin only)
+public fun update_risk_monitoring_config<T>(
+    pool: &mut BorrowingPool<T>,
+    admin_cap: &BorrowingPoolAdminCap,
+    price_change_threshold: u64,
+    monitoring_interval: u64,
+    auto_liquidation_enabled: bool,
+    risk_alert_enabled: bool,
+) {
+    // Verify admin permission
+    assert!(
+        pool.admin_cap_id_opt == option::some(object::id(admin_cap)),
+        errors::unauthorized_access()
+    );
+    
+    // Validate parameters
+    assert!(price_change_threshold <= 5000, EInvalidPoolConfig); // Max 50% threshold
+    assert!(monitoring_interval >= 60, EInvalidPoolConfig); // Min 1 minute
+    
+    // Update configuration
+    pool.risk_monitoring_config.price_change_threshold = price_change_threshold;
+    pool.risk_monitoring_config.monitoring_interval = monitoring_interval;
+    pool.risk_monitoring_config.auto_liquidation_enabled = auto_liquidation_enabled;
+    pool.risk_monitoring_config.risk_alert_enabled = risk_alert_enabled;
+}
+
+/// Get high collateral configuration for a pool
+public fun get_high_collateral_config<T>(pool: &BorrowingPool<T>): (u64, u64, u64, u64, bool) {
+    (
+        pool.high_collateral_config.btc_max_ltv,
+        pool.high_collateral_config.eth_max_ltv,
+        pool.high_collateral_config.default_max_ltv,
+        pool.high_collateral_config.level_bonus_ltv,
+        pool.high_collateral_config.dynamic_ltv_enabled,
+    )
+}
+
+/// Get risk monitoring configuration for a pool
+public fun get_risk_monitoring_config<T>(pool: &BorrowingPool<T>): (u64, u64, bool, bool) {
+    (
+        pool.risk_monitoring_config.price_change_threshold,
+        pool.risk_monitoring_config.monitoring_interval,
+        pool.risk_monitoring_config.auto_liquidation_enabled,
+        pool.risk_monitoring_config.risk_alert_enabled,
+    )
+}
+
 // ===== Interest Rate Management =====
 
 /// Update pool interest based on utilization and time elapsed
@@ -820,11 +1238,16 @@ public fun update_pool_interest<T>(
     // Calculate current interest rate based on model
     let current_rate = calculate_current_interest_rate(pool);
     
-    // Calculate interest amount for the elapsed time
+    // Calculate interest amount for the elapsed time with overflow protection
     let interest_amount = if (pool.total_borrowed > 0) {
+        // Check for potential overflow before multiplication
+        let denominator = BASIS_POINTS * SECONDS_PER_YEAR;
+        let max_safe_borrowed = 18446744073709551615u64 / (current_rate * time_elapsed); // u64::MAX / (rate * time)
+        assert!(pool.total_borrowed <= max_safe_borrowed, EArithmeticOverflow);
+        
         // Annual rate to per-second rate: rate / SECONDS_PER_YEAR
         // Interest = principal * rate * time
-        (pool.total_borrowed * current_rate * time_elapsed) / (BASIS_POINTS * SECONDS_PER_YEAR)
+        (pool.total_borrowed * current_rate * time_elapsed) / denominator
     } else {
         0
     };
@@ -862,8 +1285,12 @@ fun update_position_interest<T>(
     // Calculate current interest rate
     let current_rate = calculate_current_interest_rate(pool);
     
-    // Calculate interest for this position
-    let position_interest = (position.borrowed_amount * current_rate * time_elapsed) / (BASIS_POINTS * SECONDS_PER_YEAR);
+    // Calculate interest for this position with overflow protection
+    let denominator = BASIS_POINTS * SECONDS_PER_YEAR;
+    let max_safe_borrowed = 18446744073709551615u64 / (current_rate * time_elapsed); // u64::MAX / (rate * time)
+    assert!(position.borrowed_amount <= max_safe_borrowed, EArithmeticOverflow);
+    
+    let position_interest = (position.borrowed_amount * current_rate * time_elapsed) / denominator;
     
     position.accrued_interest = position.accrued_interest + position_interest;
     position.last_updated = current_time;
@@ -954,16 +1381,7 @@ public fun repayment_allowed<T>(pool: &BorrowingPool<T>): bool {
 
 // ===== Utility Functions =====
 
-/// Compute 10^exp for small exp (u8) to derive price scale dynamically
-fun pow10(exp: u8): u64 {
-    let mut i: u8 = 0;
-    let mut result: u64 = 1;
-    while (i < exp) {
-        result = result * 10;
-        i = i + 1;
-    };
-    result
-}
+
 
 /// Get the collateral holder object id stored in a position
 public fun get_collateral_holder_id(position: &BorrowPosition): ID {
@@ -1037,6 +1455,21 @@ public fun create_pool_for_test<T>(
         current_apr: base_rate,
     };
     
+    let high_collateral_config = HighCollateralConfig {
+        btc_max_ltv: 9700, // 97% for BTC
+        eth_max_ltv: 9500, // 95% for ETH
+        default_max_ltv: 9000, // 90% for other assets
+        level_bonus_ltv: 200, // 2% bonus for high-level users
+        dynamic_ltv_enabled: true,
+    };
+    
+    let risk_monitoring_config = RiskMonitoringConfig {
+        price_change_threshold: 500, // 5% price change threshold
+        monitoring_interval: 300, // 5 minutes
+        auto_liquidation_enabled: true,
+        risk_alert_enabled: true,
+    };
+
     BorrowingPool<T> {
         id: object::new(ctx),
         version: constants::current_version(),
@@ -1054,6 +1487,8 @@ public fun create_pool_for_test<T>(
         total_borrowed: 0,
         active_positions: 0,
         tick_config,
+        high_collateral_config,
+        risk_monitoring_config,
         max_borrow_limit: 1_000_000_000,
         admin_cap_id_opt: option::none<ID>(),
         config,
@@ -1081,4 +1516,126 @@ public fun init_registry_for_test(ctx: &mut TxContext): (BorrowingPoolRegistry, 
     };
     
     (registry, admin_cap)
+}
+
+#[test_only]
+/// Create admin cap for testing
+public fun create_admin_cap_for_test(ctx: &mut TxContext): BorrowingPoolAdminCap {
+    BorrowingPoolAdminCap {
+        id: object::new(ctx),
+    }
+}
+
+#[test_only]
+/// Create a test position for testing
+public fun create_position_for_test(
+    position_id: u64,
+    borrower: address,
+    pool_id: u64,
+    collateral_amount: u64,
+    borrowed_amount: u64,
+    accrued_interest: u64,
+    ctx: &mut TxContext
+): BorrowPosition {
+    let position_uid = object::new(ctx);
+    let position_id_inner = object::uid_to_inner(&position_uid);
+    
+    BorrowPosition {
+        id: position_uid,
+        position_id: position_id_inner,
+        borrower_account: object::id_from_address(borrower),
+        pool_id,
+        collateral_holder_id: object::id_from_address(@0x0), // dummy
+        collateral_vault_id: object::id_from_address(@0x0), // dummy
+        collateral_amount,
+        collateral_type: type_name::get<u64>(), // dummy type
+        borrowed_amount,
+        accrued_interest,
+        created_at: 0,
+        last_updated: 0,
+        term_type: TERM_TYPE_INDEFINITE,
+        maturity_time: option::none(),
+        status: POSITION_STATUS_ACTIVE,
+    }
+}
+
+#[test_only]
+/// Create a borrowing pool for testing with admin cap
+public fun create_pool_with_admin_for_test<T>(
+    pool_id: u64,
+    name: vector<u8>,
+    interest_model: u8,
+    base_rate: u64,
+    initial_ltv: u64,
+    warning_ltv: u64,
+    liquidation_ltv: u64,
+    admin_cap: &BorrowingPoolAdminCap,
+    ctx: &mut TxContext
+): BorrowingPool<T> {
+    let tick_config = TickLiquidationConfig {
+        tick_size: 50,
+        liquidation_penalty: 10,
+        liquidation_reward: 5,
+        max_liquidation_ratio: 1000,
+    };
+    
+    let high_collateral_config = HighCollateralConfig {
+        btc_max_ltv: 9700, // 97% for BTC
+        eth_max_ltv: 9500, // 95% for ETH
+        default_max_ltv: 9000, // 90% for other assets
+        level_bonus_ltv: 200, // 2% bonus for high-level users
+        dynamic_ltv_enabled: true,
+    };
+    
+    let risk_monitoring_config = RiskMonitoringConfig {
+        price_change_threshold: 500, // 5% price change threshold
+        monitoring_interval: 300, // 5 minutes
+        auto_liquidation_enabled: true,
+        risk_alert_enabled: true,
+    };
+    
+    let config = BorrowingPoolConfig {
+        min_borrow: 1,
+        min_collateral: 1,
+        borrowing_enabled: true,
+        repayment_enabled: true,
+        liquidation_enabled: true,
+        auto_compound: true,
+    };
+    
+    let stats = BorrowingPoolStats {
+        total_borrowers: 0,
+        total_interest_paid: 0,
+        total_liquidations: 0,
+        total_liquidation_penalties: 0,
+        created_at: 0,
+        last_interest_update: 0,
+        current_apr: base_rate,
+    };
+    
+    BorrowingPool<T> {
+        id: object::new(ctx),
+        version: constants::current_version(),
+        pool_id,
+        name,
+        description: b"Test pool with admin",
+        interest_model,
+        base_rate,
+        rate_slope: 1000, // 10%
+        risk_premium: 200, // 2%
+        fixed_rate: base_rate,
+        initial_ltv,
+        warning_ltv,
+        liquidation_ltv,
+        total_borrowed: 0,
+        active_positions: 0,
+        tick_config,
+        high_collateral_config,
+        risk_monitoring_config,
+        max_borrow_limit: 1_000_000_000,
+        admin_cap_id_opt: option::some(object::id(admin_cap)),
+        config,
+        stats,
+        status: BorrowingPoolStatus::Active,
+    }
 }

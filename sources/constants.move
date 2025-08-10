@@ -49,8 +49,8 @@ const ALLOWANCE_TYPE_WITHDRAWAL: u8 = 4;
 
 // ===== Oracle Constants =====
 
-/// Default maximum price delay in seconds (5 minutes)
-const DEFAULT_MAX_PRICE_DELAY: u64 = 300;
+/// Default maximum price delay in seconds (30 seconds - reduced from 5 minutes for security)
+const DEFAULT_MAX_PRICE_DELAY: u64 = 30;
 
 /// Default minimum confidence requirement (95%)
 const DEFAULT_MIN_CONFIDENCE: u64 = 95;

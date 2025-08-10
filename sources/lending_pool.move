@@ -1,6 +1,5 @@
 /// Lending Pool Module - Lending pool management system
 /// Implements LendingPool for asset lending with interest earning
-#[allow(unused_const, unused_field)]
 module olend::lending_pool;
 
 use std::type_name::{Self, TypeName};
@@ -367,7 +366,6 @@ public fun create_lending_pool<T>(
 
 /// Deposit assets into the lending pool
 /// User provides assets and receives YToken shares from the Vault
-#[allow(lint(self_transfer))]
 public fun deposit<T>(
     pool: &mut LendingPool<T>,
     vault: &mut Vault<T>,
