@@ -1,148 +1,250 @@
-# Olend DeFi 借贷平台开发 - 阶段二会话 Prompt
+# 下一个会话任务：实现多资产抵押支持（任务5.4）
 
-## 项目背景
-Olend 是一个基于 Sui Network 的去中心化借贷平台，使用 Sui Move 智能合约语言开发。这是一个支持10亿美元以上资金规模的企业级DeFi平台，严谨和安全是第一原则。
+## 任务概述
 
-## 当前开发状态 ✅
+请继续实现Olend DeFi借贷平台的任务5.4：**实现多资产抵押支持**。
 
-### 已完成的核心模块（100%测试通过）：
-- **Vault 系统** (`sources/vault.move`) - 统一流动性管理，ERC-4626兼容，Shared Object架构
-- **Account 系统** (`sources/account.move`) - 用户账户管理，积分等级系统，权限控制
-- **Registry 系统** (`sources/liquidity.move`) - 全局资产管理，每种资产一个Vault
-- **YToken 系统** (`sources/ytoken.move`) - 份额凭证实现
-- **Oracle 系统** (`sources/oracle.move`) - 价格预言机核心功能，支持缓存和验证
-- **Pyth 集成** (`sources/pyth_adapter.move`) - 与 Pyth Network 的完整集成
+## 当前状态
 
-### 系统质量指标：
-- ✅ **测试通过率**: 100% (143/143 测试全部通过)
-- ✅ **架构完整性**: Shared Object 设计，Package 权限控制
-- ✅ **安全性**: 多层安全机制，严格的错误处理
-- ✅ **依赖管理**: Pyth 和 Wormhole 依赖已正确配置
+- ✅ 任务5.3"实现高抵押率管理"已完成
+- 🎯 下一个任务：5.4"实现多资产抵押支持"
 
-## 下一阶段任务目标 🎯
+## 任务5.4具体要求
 
-根据 `.kiro/specs/olend-defi-platform/tasks.md` 实施计划，现在需要开始**阶段二：借贷核心功能**的开发：
+根据 `.kiro/specs/olend-defi-platform/tasks.md` 中的定义：
 
-### 优先任务列表：
-1. **任务 4.1-4.7** - 借贷池管理系统实现
-2. **任务 5.1-5.7** - 借款池管理系统实现
+```markdown
+- [ ] 5.4 实现多资产抵押支持
+  - 支持多种 YToken 作为抵押物
+  - 实现加权平均方法计算综合抵押率
+  - 实现多资产价格波动的实时监控
+  - 实现抵押组合的动态调整功能
+  - _需求: 5.35, 5.36, 5.37, 5.38_
+```
 
-## 核心架构原则 🏗️
+## 相关需求（来自requirements.md）
 
-### Vault 作为 Shared Object 的设计模式：
+**需求5.35**: 用户提供多种 YToken 作为抵押时，系统应支持多资产组合抵押并计算总抵押价值
+**需求5.36**: 计算多资产抵押率时，系统应使用加权平均方法计算综合抵押率
+**需求5.37**: 多资产价格波动时，系统应分别监控每种抵押资产的价格变化对总抵押率的影响
+**需求5.38**: 用户调整抵押组合时，系统应支持增加、减少或替换特定类型的抵押资产
+
+## 当前实现状态分析
+
+### 现有单资产抵押实现
+当前 `sources/borrowing_pool.move` 中的实现：
+
+1. **BorrowPosition结构体**：目前只支持单一抵押资产
+   ```move
+   public struct BorrowPosition has key, store {
+       collateral_amount: u64,        // 单一抵押数量
+       collateral_type: TypeName,     // 单一抵押类型
+       collateral_holder_id: ID,      // 单一抵押持有者ID
+       collateral_vault_id: ID,       // 单一抵押库ID
+       // ...
+   }
+   ```
+
+2. **CollateralHolder结构体**：目前只能持有单一类型的抵押物
+   ```move
+   public struct CollateralHolder<phantom C> has key, store {
+       collateral: balance::Balance<YToken<C>>,  // 单一类型抵押物
+       // ...
+   }
+   ```
+
+3. **借款函数**：目前只接受单一抵押物
+   ```move
+   public fun borrow<T, C>(
+       collateral: Coin<YToken<C>>,  // 单一抵押物
+       // ...
+   )
+   ```
+
+## 需要实现的功能
+
+### 1. 多资产抵押数据结构
+
+需要扩展或重新设计以下结构：
+
+#### 1.1 多资产抵押持有者
 ```move
-// 正确的使用模式
-public fun deposit<T>(
-    pool: &mut LendingPool<T>,
-    vault: &mut Vault<T>,      // Vault 作为参数传入
-    account_cap: &AccountCap,
-    asset: Coin<T>,
-    ctx: &mut TxContext
-): YToken<T> {
-    // 1. 验证用户权限
-    // 2. 调用 vault::deposit() (package权限)
-    // 3. 更新 pool 的统计数据
-    // 4. 更新用户积分
-    // 5. 返回 YToken
+// 新的多资产抵押持有者结构
+public struct MultiCollateralHolder has key, store {
+    id: UID,
+    position_id: ID,
+    // 存储多种类型的抵押物 - 需要设计合适的数据结构
+    collaterals: Table<TypeName, CollateralInfo>,
+}
+
+public struct CollateralInfo has store {
+    amount: u64,
+    vault_id: ID,
+    // 其他必要信息
 }
 ```
 
-### 关键设计原则：
-- **统一流动性**：每种资产只有一个 Vault<T> 作为 Shared Object
-- **业务分离**：Pool 只记录业务逻辑，真实资产在 Vault<T> 中
-- **权限控制**：Vault 的资产操作方法都是 `public(package)` 权限
-- **用户激励**：完整的积分和等级系统集成
-
-## 待实现的核心功能 📋
-
-### 4. 借贷池管理系统 (LendingPool)
-- **核心功能**：存款赚取利息，支持动态和固定利率模型
-- **关键特性**：
-  - 与统一 Vault<T> 系统集成
-  - 用户积分和等级系统深度集成
-  - 利率模型：动态利率 = 基础利率 + 利用率 × 利率斜率
-  - 收益分配：70%返还用户，10%开发团队，10%保险基金，10%国库
-  - 多池策略支持（同一资产可有多个不同策略的池子）
-
-### 5. 借款池管理系统 (BorrowingPool)
-- **核心功能**：高抵押率借款（高达97%），多资产抵押支持
-- **关键特性**：
-  - 与 Oracle 系统集成进行实时价格计算
-  - 支持 YToken 作为抵押物
-  - 多阈值管理：初始抵押率、警告抵押率、清算抵押率
-  - 借款期限管理：不定期和定期借款
-  - 为后续 Tick 清算机制预留接口
-
-## 技术要求 🔧
-
-### 开发标准：
-1. **严格测试**：每个 public 函数都必须有对应的测试用例
-2. **安全优先**：所有资金操作都要有严格的权限控制和错误处理
-3. **性能优化**：支持高并发操作，优化批量处理
-4. **代码质量**：遵循现有代码风格，添加充分的注释
-
-### 集成要求：
-- **与 Vault 集成**：通过 Registry 获取 Vault 引用，使用 package 权限调用
-- **与 Account 集成**：通过 AccountCap 验证身份，更新积分和等级
-- **与 Oracle 集成**：获取实时价格进行抵押率计算和风险评估
-- **事件发射**：记录所有重要操作用于监控和审计
-
-## 文件结构 📁
-
-### 需要创建的文件：
-```
-sources/
-├── lending_pool.move       # 借贷池管理系统
-├── borrowing_pool.move     # 借款池管理系统
-
-tests/
-├── test_lending_pool.move      # 借贷池测试
-├── test_borrowing_pool.move    # 借款池测试
-├── test_integration.move       # 集成测试（可选）
+#### 1.2 扩展BorrowPosition
+```move
+// 扩展现有BorrowPosition以支持多资产
+public struct BorrowPosition has key, store {
+    // ... 现有字段 ...
+    // 替换单一抵押字段为多资产支持
+    multi_collateral_holder_id: option::Option<ID>,
+    collateral_types: vector<TypeName>,
+    total_collateral_value_usd: u64,  // 总抵押价值（USD）
+}
 ```
 
-### 现有文件（可参考）：
-- `sources/vault.move` - Vault 系统实现参考
-- `sources/account.move` - Account 系统集成参考
-- `sources/oracle.move` - Oracle 系统集成参考
-- `tests/test_vault.move` - 测试模式参考
+### 2. 多资产抵押率计算
 
-## 成功标准 ✅
+#### 2.1 加权平均抵押率计算
+```move
+public fun calculate_multi_asset_ltv<T>(
+    pool: &BorrowingPool<T>,
+    position: &BorrowPosition,
+    multi_collateral_holder: &MultiCollateralHolder,
+    vaults: &vector<&Vault<_>>,  // 多个vault引用
+    oracle: &PriceOracle,
+    clock: &Clock,
+): u64
+```
 
-### 功能完整性：
-- [ ] LendingPool 支持存取资产，利率计算，收益分配
-- [ ] BorrowingPool 支持高抵押率借款，多资产抵押，风险管理
-- [ ] 完整的用户积分和等级系统集成
-- [ ] 与现有系统无缝集成
+#### 2.2 单个资产对总抵押率的贡献计算
+```move
+public fun calculate_asset_contribution<T, C>(
+    asset_amount: u64,
+    asset_price: u64,
+    total_collateral_value: u64,
+): u64
+```
 
-### 质量标准：
-- [ ] 所有测试通过（目标：保持100%通过率）
-- [ ] 代码覆盖率 ≥ 90%
-- [ ] 无安全漏洞
-- [ ] 性能满足高并发要求
+### 3. 多资产借款功能
 
-## 开发指导 💡
+#### 3.1 多资产借款函数
+```move
+public fun borrow_with_multi_collateral<T>(
+    pool: &mut BorrowingPool<T>,
+    borrow_vault: &mut Vault<T>,
+    account: &mut Account,
+    account_cap: &AccountCap,
+    collaterals: vector<CollateralInput>,  // 多种抵押物输入
+    borrow_amount: u64,
+    oracle: &PriceOracle,
+    clock: &Clock,
+    ctx: &mut TxContext
+): (Coin<T>, BorrowPosition)
 
-### 开始建议：
-1. **先阅读现有代码**：理解 Vault、Account、Oracle 的实现模式
-2. **从 LendingPool 开始**：相对简单，为 BorrowingPool 奠定基础
-3. **渐进式开发**：先实现核心功能，再添加高级特性
-4. **持续测试**：每完成一个功能就编写测试
+public struct CollateralInput {
+    coin: Coin<YToken<_>>,  // 需要处理泛型
+    vault_ref: &Vault<_>,
+}
+```
 
-### 关键注意事项：
-- **资金安全**：所有资金操作必须是原子性的
-- **权限验证**：严格验证用户身份和操作权限
-- **错误处理**：提供清晰的错误信息和恢复机制
-- **事件记录**：记录所有重要操作用于审计
+### 4. 抵押组合管理
 
-## 项目愿景 🚀
+#### 4.1 添加抵押物
+```move
+public fun add_collateral<T, C>(
+    pool: &mut BorrowingPool<T>,
+    position: &mut BorrowPosition,
+    multi_collateral_holder: &mut MultiCollateralHolder,
+    additional_collateral: Coin<YToken<C>>,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+)
+```
 
-通过这个阶段的开发，Olend 将具备完整的借贷功能，成为一个功能完整、安全可靠的 DeFi 借贷平台，为用户提供：
-- 高资本效率的统一流动性
-- 高达97%的借贷价值比
-- 70%的收益返还给用户
-- 完整的用户激励系统
+#### 4.2 减少抵押物
+```move
+public fun reduce_collateral<T, C>(
+    pool: &mut BorrowingPool<T>,
+    position: &mut BorrowPosition,
+    multi_collateral_holder: &mut MultiCollateralHolder,
+    asset_type: TypeName,
+    reduce_amount: u64,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+    ctx: &mut TxContext
+): Coin<YToken<C>>
+```
 
----
+### 5. 实时监控和风险管理
 
-**开始开发时，请确认你理解了项目背景和当前任务，然后从任务 4.1 开始实施。记住要使用 `taskStatus` 工具更新任务进度！**
+#### 5.1 多资产价格监控
+```move
+public fun monitor_multi_asset_risk<T>(
+    pool: &BorrowingPool<T>,
+    position: &BorrowPosition,
+    multi_collateral_holder: &MultiCollateralHolder,
+    vaults: &vector<&Vault<_>>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+)
+```
+
+#### 5.2 单个资产价格变化影响分析
+```move
+public fun analyze_asset_price_impact<T, C>(
+    position: &BorrowPosition,
+    asset_type: TypeName,
+    old_price: u64,
+    new_price: u64,
+    total_collateral_value: u64,
+): (u64, u64)  // (new_ltv, impact_percentage)
+```
+
+## 技术挑战和解决方案
+
+### 1. 泛型类型处理
+- **挑战**: Move语言中处理多种泛型类型的复杂性
+- **解决方案**: 使用TypeName作为键，结合动态类型检查
+
+### 2. 数据结构设计
+- **挑战**: 如何高效存储和管理多种类型的抵押物
+- **解决方案**: 使用Table<TypeName, CollateralInfo>结构
+
+### 3. 计算复杂性
+- **挑战**: 多资产抵押率计算的复杂性和精度
+- **解决方案**: 分步计算，使用高精度数学运算
+
+## 测试要求
+
+需要创建全面的测试套件：
+
+1. **多资产抵押基础功能测试**
+2. **加权平均抵押率计算测试**
+3. **抵押组合动态调整测试**
+4. **多资产价格波动监控测试**
+5. **边界条件和异常情况测试**
+
+## 实现步骤建议
+
+1. **第一步**: 设计和实现多资产数据结构
+2. **第二步**: 实现多资产抵押率计算逻辑
+3. **第三步**: 扩展借款功能支持多资产
+4. **第四步**: 实现抵押组合管理功能
+5. **第五步**: 实现实时监控和风险管理
+6. **第六步**: 编写全面的测试套件
+7. **第七步**: 集成测试和优化
+
+## 注意事项
+
+1. **向后兼容性**: 确保新的多资产功能不破坏现有的单资产功能
+2. **性能优化**: 多资产计算可能比较复杂，需要注意性能
+3. **安全性**: 多资产抵押增加了攻击面，需要额外的安全检查
+4. **用户体验**: 多资产操作应该对用户友好且直观
+
+## 开始实现
+
+请从任务5.4开始实现，按照上述分析和建议进行开发。记住要：
+
+1. 先更新任务状态为"in_progress"
+2. 逐步实现各个功能模块
+3. 为每个功能编写相应的测试
+4. 确保代码质量和安全性
+5. 完成后更新任务状态为"completed"
+
+祝你实现顺利！

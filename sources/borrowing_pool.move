@@ -310,6 +310,12 @@ const EBorrowLimitExceeded: u64 = 4009;
 /// Collateral ratio too high (unsafe)
 const ECollateralRatioTooHigh: u64 = 4010;
 
+/// Position is overdue
+const EPositionOverdue: u64 = 4011;
+
+/// Invalid term configuration
+const EInvalidTerm: u64 = 4012;
+
 // Removed liquidation-related error codes (unused)
 
 // ===== Interest Model Constants =====
@@ -338,12 +344,19 @@ const POSITION_STATUS_CLOSED: u8 = 3;
 
 /// Term type constants
 const TERM_TYPE_INDEFINITE: u8 = 0;
+const TERM_TYPE_FIXED: u8 = 1;
 
 /// Maximum reasonable exchange rate (10x) to prevent manipulation
 const MAX_REASONABLE_EXCHANGE_RATE: u64 = 10_0000_0000; // 10.0 with 8 decimal places
 
 /// Minimum reasonable exchange rate (0.1x) to prevent manipulation  
 const MIN_REASONABLE_EXCHANGE_RATE: u64 = 10000000; // 0.1 with 8 decimal places
+
+/// Grace period for overdue positions (7 days in seconds)
+const OVERDUE_GRACE_PERIOD: u64 = 604800;
+
+/// Overdue penalty rate (in basis points, e.g., 500 = 5% annual)
+const OVERDUE_PENALTY_RATE: u64 = 500;
 
 // ===== Helper Functions =====
 
@@ -662,7 +675,7 @@ fun contains_substring(haystack: &vector<u8>, needle: &vector<u8>): bool {
 
 /// Calculate current collateral ratio for a position
 public fun calculate_position_ltv<T, C>(
-    pool: &BorrowingPool<T>,
+    _pool: &BorrowingPool<T>,
     position: &BorrowPosition,
     collateral_vault: &Vault<C>,
     oracle: &PriceOracle,
@@ -934,10 +947,14 @@ public fun borrow<T, C>(
     // Update user account activity and points
     account::update_user_activity_for_module(account, account_cap, ctx);
     
-    // Calculate borrow points based on amount (1 point per 1000 units)
-    let borrow_points = borrow_amount / 1000;
-    if (borrow_points > 0) {
-        account::add_user_points_for_module(account, account_cap, borrow_points);
+    // Calculate borrowing points based on amount and user level
+    let base_borrow_points = borrow_amount / 1000; // 1 point per 1000 units
+    let user_level = account::get_level(account);
+    let level_bonus_points = calculate_level_bonus_points(user_level, base_borrow_points);
+    let total_borrow_points = base_borrow_points + level_bonus_points;
+    
+    if (total_borrow_points > 0) {
+        account::add_user_points_for_module(account, account_cap, total_borrow_points);
     };
     
     // Add position to user account
@@ -952,6 +969,40 @@ public fun borrow<T, C>(
         position_id,
         timestamp: clock::timestamp_ms(clock) / 1000,
     });
+    
+    (borrowed_asset, position)
+}
+
+/// Borrow assets with fixed term (definite period)
+/// Creates a new fixed-term borrow position
+public fun borrow_fixed_term<T, C>(
+    pool: &mut BorrowingPool<T>,
+    borrow_vault: &mut Vault<T>,
+    collateral_vault: &mut Vault<C>,
+    account: &mut Account,
+    account_cap: &AccountCap,
+    collateral: Coin<YToken<C>>,
+    borrow_amount: u64,
+    term_days: u64, // Borrowing term in days
+    oracle: &PriceOracle,
+    clock: &Clock,
+    ctx: &mut TxContext
+): (Coin<T>, BorrowPosition) {
+    // Validate term days (minimum 1 day, maximum 365 days)
+    assert!(term_days >= 1 && term_days <= 365, EInvalidPoolConfig);
+    
+    // Call the regular borrow function first
+    let (borrowed_asset, mut position) = borrow<T, C>(
+        pool, borrow_vault, collateral_vault, account, account_cap,
+        collateral, borrow_amount, oracle, clock, ctx
+    );
+    
+    // Update position to fixed term
+    let current_time = clock::timestamp_ms(clock) / 1000;
+    let maturity_time = current_time + (term_days * 86400); // Convert days to seconds
+    
+    position.term_type = TERM_TYPE_FIXED;
+    position.maturity_time = option::some(maturity_time);
     
     (borrowed_asset, position)
 }
@@ -1043,7 +1094,10 @@ public fun repay<T>(
     
     // Update interest before repayment
     update_pool_interest(pool, clock);
-    update_position_interest(position, pool, clock);
+    update_position_interest_with_level_discount(position, pool, account, clock);
+    
+    // Apply overdue penalty and deduct credit points if position is overdue
+    apply_overdue_penalty_with_account(position, account, account_cap, clock);
     
     // Snapshot amounts before mutation
     let original_principal = position.borrowed_amount;
@@ -1112,9 +1166,26 @@ public fun repay<T>(
     account::update_user_activity_for_module(account, account_cap, ctx);
     
     // Calculate repayment points (credit points for good behavior)
-    let repay_points = actual_repay_amount / 500; // 1 point per 500 units (better than borrowing)
-    if (repay_points > 0) {
-        account::add_user_points_for_module(account, account_cap, repay_points);
+    let base_repay_points = actual_repay_amount / 500; // 1 point per 500 units (better than borrowing)
+    
+    // Add level bonus for repayment points
+    let user_level = account::get_level(account);
+    let level_bonus_repay_points = calculate_level_bonus_points(user_level, base_repay_points);
+    
+    // Add bonus credit points for early repayment
+    let early_repay_bonus = calculate_early_repayment_bonus(position, clock);
+    
+    // Add on-time repayment bonus (extra points for not being overdue)
+    let on_time_bonus = if (!is_position_overdue(position, clock)) {
+        base_repay_points / 10 // 10% bonus for on-time repayment
+    } else {
+        0
+    };
+    
+    let total_credit_points = base_repay_points + level_bonus_repay_points + early_repay_bonus + on_time_bonus;
+    
+    if (total_credit_points > 0) {
+        account::add_user_points_for_module(account, account_cap, total_credit_points);
     };
     
     // Transfer remaining coin back to user if any
@@ -1269,10 +1340,11 @@ public fun update_pool_interest<T>(
     pool.stats.last_interest_update = current_time;
 }
 
-/// Update interest for a specific position
-fun update_position_interest<T>(
+/// Update interest for a specific position with user level discount
+fun update_position_interest_with_level_discount<T>(
     position: &mut BorrowPosition,
     pool: &BorrowingPool<T>,
+    account: &Account,
     clock: &Clock,
 ) {
     let current_time = clock::timestamp_ms(clock) / 1000;
@@ -1282,12 +1354,12 @@ fun update_position_interest<T>(
         return
     };
     
-    // Calculate current interest rate
-    let current_rate = calculate_current_interest_rate(pool);
+    // Calculate interest rate with user level discount
+    let current_rate = calculate_interest_rate_with_level_discount(pool, account);
     
     // Calculate interest for this position with overflow protection
     let denominator = BASIS_POINTS * SECONDS_PER_YEAR;
-    let max_safe_borrowed = 18446744073709551615u64 / (current_rate * time_elapsed); // u64::MAX / (rate * time)
+    let max_safe_borrowed = 18446744073709551615u64 / (current_rate * time_elapsed + 1); // u64::MAX / (rate * time), +1 to avoid division by zero
     assert!(position.borrowed_amount <= max_safe_borrowed, EArithmeticOverflow);
     
     let position_interest = (position.borrowed_amount * current_rate * time_elapsed) / denominator;
@@ -1295,6 +1367,7 @@ fun update_position_interest<T>(
     position.accrued_interest = position.accrued_interest + position_interest;
     position.last_updated = current_time;
 }
+
 
 /// Calculate current interest rate based on pool's interest model
 fun calculate_current_interest_rate<T>(pool: &BorrowingPool<T>): u64 {
@@ -1313,6 +1386,267 @@ fun calculate_current_interest_rate<T>(pool: &BorrowingPool<T>): u64 {
             pool.base_rate + pool.risk_premium
         }
     }
+}
+
+/// Calculate interest rate with user level discount applied
+/// VIP users get 0.1%-0.5% discount based on their level
+public fun calculate_interest_rate_with_level_discount<T>(
+    pool: &BorrowingPool<T>,
+    account: &Account
+): u64 {
+    let base_rate = calculate_current_interest_rate(pool);
+    let user_level = account::get_level(account);
+    
+    // Calculate level-based discount
+    let discount = calculate_level_interest_discount(user_level);
+    
+    // Apply discount (ensure rate doesn't go below 0)
+    if (base_rate > discount) {
+        base_rate - discount
+    } else {
+        0
+    }
+}
+
+/// Calculate interest rate discount based on user level
+/// Level 1-2: No discount
+/// Level 3-4: 0.1% discount (10 basis points)
+/// Level 5-6: 0.2% discount (20 basis points)
+/// Level 7-8: 0.3% discount (30 basis points)
+/// Level 9-10: 0.5% discount (50 basis points)
+fun calculate_level_interest_discount(user_level: u8): u64 {
+    if (user_level >= 9) {
+        50 // 0.5% discount for diamond users (level 9-10)
+    } else if (user_level >= 7) {
+        30 // 0.3% discount for platinum users (level 7-8)
+    } else if (user_level >= 5) {
+        20 // 0.2% discount for gold users (level 5-6)
+    } else if (user_level >= 3) {
+        10 // 0.1% discount for silver users (level 3-4)
+    } else {
+        0  // No discount for bronze users (level 1-2)
+    }
+}
+
+/// Calculate bonus credit points for early repayment
+/// Rewards users who repay before significant interest accrues
+fun calculate_early_repayment_bonus(position: &BorrowPosition, clock: &Clock): u64 {
+    let current_time = clock::timestamp_ms(clock) / 1000;
+    let position_age = current_time - position.created_at;
+    
+    // Early repayment bonus based on how quickly the loan is repaid
+    // Within 1 day: 50% bonus
+    // Within 1 week: 25% bonus  
+    // Within 1 month: 10% bonus
+    // After 1 month: No bonus
+    let bonus_multiplier = if (position_age <= 86400) { // 1 day
+        50 // 50% bonus
+    } else if (position_age <= 604800) { // 1 week
+        25 // 25% bonus
+    } else if (position_age <= 2592000) { // 1 month
+        10 // 10% bonus
+    } else {
+        0 // No bonus
+    };
+    
+    // Base bonus points based on borrowed amount
+    let base_bonus = position.borrowed_amount / 2000; // 1 bonus point per 2000 units
+    
+    // Apply multiplier
+    (base_bonus * bonus_multiplier) / 100
+}
+
+/// Calculate credit points penalty for overdue positions
+/// Penalizes users who fail to repay on time
+fun calculate_overdue_points_penalty(position: &BorrowPosition, clock: &Clock): u64 {
+    if (!is_position_overdue(position, clock)) {
+        return 0
+    };
+    
+    let maturity_time = *option::borrow(&position.maturity_time);
+    let current_time = clock::timestamp_ms(clock) / 1000;
+    let overdue_days = (current_time - maturity_time) / 86400; // Convert to days
+    
+    if (overdue_days == 0) {
+        return 0
+    };
+    
+    // Calculate penalty points based on borrowed amount and overdue duration
+    // Base penalty: 1 point per 500 units borrowed (same rate as repayment reward)
+    let base_penalty = position.borrowed_amount / 500;
+    
+    // Escalating penalty based on overdue duration
+    // 1-3 days: 1x penalty
+    // 4-7 days: 2x penalty (still in grace period)
+    // 8-14 days: 3x penalty
+    // 15+ days: 5x penalty
+    let penalty_multiplier = if (overdue_days <= 3) {
+        1 // 1x penalty for short overdue
+    } else if (overdue_days <= 7) {
+        2 // 2x penalty within grace period
+    } else if (overdue_days <= 14) {
+        3 // 3x penalty after grace period
+    } else {
+        5 // 5x penalty for long overdue
+    };
+    
+    base_penalty * penalty_multiplier
+}
+
+/// Calculate bonus points based on user level
+/// Higher level users get more points for the same activities
+fun calculate_level_bonus_points(user_level: u8, base_points: u64): u64 {
+    // Level 0-2: No bonus
+    // Level 3-4: 10% bonus
+    // Level 5-6: 20% bonus
+    // Level 7-8: 30% bonus
+    // Level 9-10: 50% bonus (diamond users)
+    let bonus_percentage = if (user_level >= 9) {
+        50 // 50% bonus for diamond users (level 9-10)
+    } else if (user_level >= 7) {
+        30 // 30% bonus for platinum users (level 7-8)
+    } else if (user_level >= 5) {
+        20 // 20% bonus for gold users (level 5-6)
+    } else if (user_level >= 3) {
+        10 // 10% bonus for silver users (level 3-4)
+    } else {
+        0  // No bonus for bronze users (level 1-2)
+    };
+    
+    (base_points * bonus_percentage) / 100
+}
+
+// ===== Term and Maturity Management Functions =====
+
+/// Check if a position is overdue
+public fun is_position_overdue(position: &BorrowPosition, clock: &Clock): bool {
+    if (position.term_type == TERM_TYPE_INDEFINITE) {
+        return false // Indefinite positions never expire
+    };
+    
+    if (option::is_none(&position.maturity_time)) {
+        return false // No maturity time set
+    };
+    
+    let maturity_time = *option::borrow(&position.maturity_time);
+    let current_time = clock::timestamp_ms(clock) / 1000;
+    
+    current_time > maturity_time
+}
+
+/// Check if a position is in grace period (overdue but within grace period)
+public fun is_position_in_grace_period(position: &BorrowPosition, clock: &Clock): bool {
+    if (!is_position_overdue(position, clock)) {
+        return false
+    };
+    
+    let maturity_time = *option::borrow(&position.maturity_time);
+    let current_time = clock::timestamp_ms(clock) / 1000;
+    
+    (current_time - maturity_time) <= OVERDUE_GRACE_PERIOD
+}
+
+/// Calculate overdue penalty for a position
+public fun calculate_overdue_penalty(position: &BorrowPosition, clock: &Clock): u64 {
+    if (!is_position_overdue(position, clock)) {
+        return 0
+    };
+    
+    let maturity_time = *option::borrow(&position.maturity_time);
+    let current_time = clock::timestamp_ms(clock) / 1000;
+    let overdue_days = (current_time - maturity_time) / 86400; // Convert to days
+    
+    if (overdue_days == 0) {
+        return 0
+    };
+    
+    // Calculate penalty: principal * penalty_rate * overdue_days / 365
+    let principal = position.borrowed_amount;
+    let annual_penalty = (principal * OVERDUE_PENALTY_RATE) / BASIS_POINTS;
+    (annual_penalty * overdue_days) / 365
+}
+
+/// Update position with overdue penalty and deduct credit points
+fun apply_overdue_penalty(position: &mut BorrowPosition, clock: &Clock) {
+    if (!is_position_overdue(position, clock)) {
+        return
+    };
+    
+    let penalty = calculate_overdue_penalty(position, clock);
+    if (penalty > 0) {
+        position.accrued_interest = position.accrued_interest + penalty;
+        position.last_updated = clock::timestamp_ms(clock) / 1000;
+    };
+}
+
+/// Apply overdue penalty and deduct credit points from user account
+/// This is a separate function that requires account access for point deduction
+fun apply_overdue_penalty_with_account(
+    position: &mut BorrowPosition, 
+    account: &mut Account,
+    account_cap: &AccountCap,
+    clock: &Clock
+) {
+    if (!is_position_overdue(position, clock)) {
+        return
+    };
+    
+    let penalty = calculate_overdue_penalty(position, clock);
+    if (penalty > 0) {
+        position.accrued_interest = position.accrued_interest + penalty;
+        position.last_updated = clock::timestamp_ms(clock) / 1000;
+        
+        // Calculate credit points to deduct based on overdue severity
+        let overdue_points_penalty = calculate_overdue_points_penalty(position, clock);
+        if (overdue_points_penalty > 0) {
+            account::deduct_points(account, account_cap, overdue_points_penalty);
+        };
+    };
+}
+
+/// Get position maturity information
+public fun get_position_maturity_info(position: &BorrowPosition): (u8, option::Option<u64>) {
+    (position.term_type, position.maturity_time)
+}
+
+/// Get days until maturity (returns 0 if indefinite or already overdue)
+public fun get_days_until_maturity(position: &BorrowPosition, clock: &Clock): u64 {
+    if (position.term_type == TERM_TYPE_INDEFINITE) {
+        return 0 // Indefinite positions never expire
+    };
+    
+    if (option::is_none(&position.maturity_time)) {
+        return 0 // No maturity time set
+    };
+    
+    let maturity_time = *option::borrow(&position.maturity_time);
+    let current_time = clock::timestamp_ms(clock) / 1000;
+    
+    if (current_time >= maturity_time) {
+        return 0 // Already overdue
+    };
+    
+    (maturity_time - current_time) / 86400 // Convert to days
+}
+
+/// Check if early repayment is allowed for fixed-term positions
+public fun is_early_repayment_allowed(position: &BorrowPosition, clock: &Clock): bool {
+    if (position.term_type == TERM_TYPE_INDEFINITE) {
+        return true // Indefinite positions can always be repaid
+    };
+    
+    // Fixed-term positions can be repaid early, but may incur penalties
+    // For now, we allow early repayment but give bonus points for it
+    true
+}
+
+/// Calculate the total amount due for a position (principal + interest + penalties)
+public fun calculate_total_amount_due(position: &BorrowPosition, clock: &Clock): u64 {
+    let principal = position.borrowed_amount;
+    let interest = position.accrued_interest;
+    let penalty = calculate_overdue_penalty(position, clock);
+    
+    principal + interest + penalty
 }
 
 // ===== Query Functions =====
@@ -1379,9 +1713,93 @@ public fun repayment_allowed<T>(pool: &BorrowingPool<T>): bool {
     (pool.status == BorrowingPoolStatus::Active || pool.status == BorrowingPoolStatus::RepaymentOnly)
 }
 
+/// Get position term information for display
+public fun get_position_term_info(position: &BorrowPosition, clock: &Clock): (u8, option::Option<u64>, u64, bool, u64) {
+    let term_type = position.term_type;
+    let maturity_time = position.maturity_time;
+    let days_until_maturity = get_days_until_maturity(position, clock);
+    let is_overdue = is_position_overdue(position, clock);
+    let overdue_penalty = calculate_overdue_penalty(position, clock);
+    
+    (term_type, maturity_time, days_until_maturity, is_overdue, overdue_penalty)
+}
+
+/// Get position financial summary
+public fun get_position_financial_summary(position: &BorrowPosition, clock: &Clock): (u64, u64, u64, u64) {
+    let principal = position.borrowed_amount;
+    let interest = position.accrued_interest;
+    let penalty = calculate_overdue_penalty(position, clock);
+    let total_due = calculate_total_amount_due(position, clock);
+    
+    (principal, interest, penalty, total_due)
+}
+
+/// Calculate potential points for borrowing a specific amount
+/// Helps users understand point rewards before borrowing
+public fun calculate_potential_borrow_points(borrow_amount: u64, user_level: u8): u64 {
+    let base_points = borrow_amount / 1000; // 1 point per 1000 units
+    let level_bonus = calculate_level_bonus_points(user_level, base_points);
+    base_points + level_bonus
+}
+
+/// Calculate potential points for repaying a specific amount
+/// Helps users understand point rewards before repaying
+public fun calculate_potential_repay_points(
+    position: &BorrowPosition, 
+    repay_amount: u64, 
+    user_level: u8, 
+    clock: &Clock
+): u64 {
+    let base_points = repay_amount / 500; // 1 point per 500 units
+    let level_bonus = calculate_level_bonus_points(user_level, base_points);
+    let early_bonus = calculate_early_repayment_bonus(position, clock);
+    let on_time_bonus = if (!is_position_overdue(position, clock)) {
+        base_points / 10 // 10% bonus for on-time repayment
+    } else {
+        0
+    };
+    
+    base_points + level_bonus + early_bonus + on_time_bonus
+}
+
+/// Calculate potential point penalty for overdue position
+/// Helps users understand the cost of being overdue
+public fun calculate_potential_overdue_penalty_points(position: &BorrowPosition, clock: &Clock): u64 {
+    calculate_overdue_points_penalty(position, clock)
+}
+
 // ===== Utility Functions =====
 
-
+#[test_only]
+/// Create a test position for testing purposes
+public fun create_test_position(
+    position_id: u64,
+    borrower: address,
+    pool_id: u64,
+    borrowed_amount: u64,
+    accrued_interest: u64,
+    term_type: u8,
+    maturity_time: option::Option<u64>,
+    status: u8,
+): BorrowPosition {
+    BorrowPosition {
+        id: object::new(&mut tx_context::dummy()),
+        position_id: object::id_from_address(borrower),
+        borrower_account: object::id_from_address(borrower),
+        pool_id,
+        collateral_holder_id: object::id_from_address(borrower),
+        collateral_vault_id: object::id_from_address(borrower),
+        collateral_amount: 1000,
+        collateral_type: type_name::get<sui::sui::SUI>(),
+        borrowed_amount,
+        accrued_interest,
+        created_at: 0,
+        last_updated: 0,
+        term_type,
+        maturity_time,
+        status,
+    }
+}
 
 /// Get the collateral holder object id stored in a position
 public fun get_collateral_holder_id(position: &BorrowPosition): ID {
@@ -1529,7 +1947,7 @@ public fun create_admin_cap_for_test(ctx: &mut TxContext): BorrowingPoolAdminCap
 #[test_only]
 /// Create a test position for testing
 public fun create_position_for_test(
-    position_id: u64,
+    _position_id: u64,
     borrower: address,
     pool_id: u64,
     collateral_amount: u64,
@@ -1638,4 +2056,10 @@ public fun create_pool_with_admin_for_test<T>(
         stats,
         status: BorrowingPoolStatus::Active,
     }
+}
+#[
+test_only]
+/// Set position created_at time for testing purposes
+public fun set_position_created_at_for_test(position: &mut BorrowPosition, created_at: u64) {
+    position.created_at = created_at;
 }
