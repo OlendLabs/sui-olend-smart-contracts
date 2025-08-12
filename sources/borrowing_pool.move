@@ -15,6 +15,7 @@ use olend::vault::{Self, Vault};
 use olend::ytoken::{YToken};
 use olend::account::{Self, Account, AccountCap};
 use olend::oracle::{Self, PriceOracle};
+use olend::safe_math;
 
 // ===== Struct Definitions =====
 
@@ -385,7 +386,7 @@ fun validate_vault_exchange_rate<C>(vault: &Vault<C>, collateral_amount: u64): u
     
     // Calculate exchange rate: assets per share (scaled by 8 decimal places)
     let exchange_rate = if (total_assets > 0) {
-        (total_assets * 100000000) / total_shares // Scale by 10^8 for precision
+        safe_math::safe_mul_div(total_assets, 100000000, total_shares) // Scale by 10^8 for precision
     } else {
         100000000 // 1.0 when no assets
     };
@@ -398,11 +399,11 @@ fun validate_vault_exchange_rate<C>(vault: &Vault<C>, collateral_amount: u64): u
     let collateral_assets = vault::convert_to_assets(vault, collateral_amount);
     
     // Additional sanity check: conversion should be consistent with rate
-    let expected_assets = (collateral_amount * exchange_rate) / 100000000;
-    let rate_tolerance = expected_assets / 100; // 1% tolerance
+    let expected_assets = safe_math::safe_mul_div(collateral_amount, exchange_rate, 100000000);
+    let rate_tolerance = safe_math::safe_div(expected_assets, 100); // 1% tolerance
     assert!(
-        collateral_assets >= expected_assets - rate_tolerance && 
-        collateral_assets <= expected_assets + rate_tolerance,
+        collateral_assets >= safe_math::safe_sub(expected_assets, rate_tolerance) && 
+        collateral_assets <= safe_math::safe_add(expected_assets, rate_tolerance),
         EInvalidExchangeRate
     );
     
@@ -487,7 +488,7 @@ public fun create_borrowing_pool<T>(
     registry.pool_counter = registry.pool_counter + 1;
     let pool_id = registry.pool_counter;
     
-    let current_time = clock::timestamp_ms(clock) / 1000;
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
     
     // Create tick liquidation configuration
     let tick_config = TickLiquidationConfig {
@@ -597,7 +598,7 @@ public fun calculate_max_ltv_for_asset<T, C>(
     if (pool.high_collateral_config.dynamic_ltv_enabled) {
         let user_level = account::get_level(account);
         let level_bonus = calculate_level_bonus_ltv(user_level, pool.high_collateral_config.level_bonus_ltv);
-        base_max_ltv + level_bonus
+        safe_math::safe_add(base_max_ltv, level_bonus)
     } else {
         base_max_ltv
     }
@@ -689,11 +690,11 @@ public fun calculate_position_ltv<T, C>(
     assert!(oracle::price_info_is_valid(&borrow_asset_price_info), errors::price_validation_failed());
     assert!(oracle::price_info_is_valid(&collateral_asset_price_info), errors::price_validation_failed());
     
-    let now = clock::timestamp_ms(clock) / 1000;
+    let now = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
     let borrow_price_time = oracle::price_info_timestamp(&borrow_asset_price_info);
     let collateral_price_time = oracle::price_info_timestamp(&collateral_asset_price_info);
-    assert!(now - borrow_price_time <= constants::default_max_price_delay(), errors::price_validation_failed());
-    assert!(now - collateral_price_time <= constants::default_max_price_delay(), errors::price_validation_failed());
+    assert!(safe_math::safe_sub(now, borrow_price_time) <= constants::default_max_price_delay(), errors::price_validation_failed());
+    assert!(safe_math::safe_sub(now, collateral_price_time) <= constants::default_max_price_delay(), errors::price_validation_failed());
     
     let borrow_asset_price_raw = oracle::price_info_price(&borrow_asset_price_info);
     let collateral_asset_price_raw = oracle::price_info_price(&collateral_asset_price_info);
@@ -709,21 +710,21 @@ public fun calculate_position_ltv<T, C>(
     let collateral_assets = validate_vault_exchange_rate(collateral_vault, position.collateral_amount);
     assert!(collateral_assets > 0, EInsufficientCollateral);
     
-    // Calculate total debt (principal + accrued interest)
-    let total_debt = position.borrowed_amount + position.accrued_interest;
+    // Calculate total debt (principal + accrued interest) with overflow protection
+    let total_debt = safe_math::safe_add(position.borrowed_amount, position.accrued_interest);
     
     // Price scale based on oracle price precision
     let price_scale: u64 = pow10(constants::price_decimal_precision());
     
-    // Calculate values in USD
-    let collateral_value_usd = (collateral_assets * collateral_asset_price) / price_scale;
-    let debt_value_usd = (total_debt * borrow_asset_price) / price_scale;
+    // Calculate values in USD with overflow protection
+    let collateral_value_usd = safe_math::safe_mul_div(collateral_assets, collateral_asset_price, price_scale);
+    let debt_value_usd = safe_math::safe_mul_div(total_debt, borrow_asset_price, price_scale);
     
     // Avoid division by zero
     assert!(collateral_value_usd > 0, EInsufficientCollateral);
     
-    // Calculate LTV: debt_value / collateral_value * 100%
-    (debt_value_usd * BASIS_POINTS) / collateral_value_usd
+    // Calculate LTV: debt_value / collateral_value * 100% with overflow protection
+    safe_math::safe_mul_div(debt_value_usd, BASIS_POINTS, collateral_value_usd)
 }
 
 /// Monitor position risk and emit warnings if necessary
@@ -739,7 +740,7 @@ public fun monitor_position_risk<T, C>(
     };
     
     let current_ltv = calculate_position_ltv<T, C>(pool, position, collateral_vault, oracle, clock);
-    let timestamp = clock::timestamp_ms(clock) / 1000;
+    let timestamp = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
     
     // Check if position is approaching warning threshold
     if (current_ltv >= pool.warning_ltv && current_ltv < pool.liquidation_ltv) {
@@ -778,7 +779,7 @@ public fun update_position_ltv_tracking<T, C>(
         let old_debt = position.borrowed_amount + position.accrued_interest;
         let collateral_assets = vault::convert_to_assets(collateral_vault, position.collateral_amount);
         if (collateral_assets > 0) {
-            (old_debt * BASIS_POINTS) / collateral_assets // Simplified calculation
+            safe_math::safe_mul_div(old_debt, BASIS_POINTS, collateral_assets) // Simplified calculation
         } else {
             0
         }
@@ -796,7 +797,7 @@ public fun update_position_ltv_tracking<T, C>(
             borrower: object::id_to_address(&position.borrower_account),
             old_ltv,
             new_ltv,
-            timestamp: clock::timestamp_ms(clock) / 1000,
+            timestamp: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
         });
     };
     
@@ -861,11 +862,11 @@ public fun borrow<T, C>(
     assert!(oracle::price_info_is_valid(&collateral_asset_price_info), errors::price_validation_failed());
     
     // Freshness check using default max delay to avoid stale data
-    let now = clock::timestamp_ms(clock) / 1000;
+    let now = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
     let borrow_price_time = oracle::price_info_timestamp(&borrow_asset_price_info);
     let collateral_price_time = oracle::price_info_timestamp(&collateral_asset_price_info);
-    assert!(now - borrow_price_time <= constants::default_max_price_delay(), errors::price_validation_failed());
-    assert!(now - collateral_price_time <= constants::default_max_price_delay(), errors::price_validation_failed());
+    assert!(safe_math::safe_sub(now, borrow_price_time) <= constants::default_max_price_delay(), errors::price_validation_failed());
+    assert!(safe_math::safe_sub(now, collateral_price_time) <= constants::default_max_price_delay(), errors::price_validation_failed());
     
     let borrow_asset_price_raw = oracle::price_info_price(&borrow_asset_price_info);
     let collateral_asset_price_raw = oracle::price_info_price(&collateral_asset_price_info);
@@ -886,13 +887,13 @@ public fun borrow<T, C>(
     let price_scale: u64 = pow10(constants::price_decimal_precision());
     
     // Calculate collateral value and borrow value in USD using safe order to reduce overflow risk
-    let collateral_value_usd = (collateral_assets * collateral_asset_price) / price_scale;
-    let borrow_value_usd = (borrow_amount * borrow_asset_price) / price_scale;
+    let collateral_value_usd = safe_math::safe_mul_div(collateral_assets, collateral_asset_price, price_scale);
+    let borrow_value_usd = safe_math::safe_mul_div(borrow_amount, borrow_asset_price, price_scale);
     // Avoid division by zero in LTV calculation
     assert!(collateral_value_usd > 0, EInsufficientCollateral);
     
-    // Calculate collateral ratio (LTV)
-    let collateral_ratio = (borrow_value_usd * BASIS_POINTS) / collateral_value_usd;
+    // Calculate collateral ratio (LTV) with overflow protection
+    let collateral_ratio = safe_math::safe_mul_div(borrow_value_usd, BASIS_POINTS, collateral_value_usd);
     
     // Calculate maximum allowed LTV for this asset type and user level
     let max_allowed_ltv = calculate_max_ltv_for_asset<T, C>(pool, account);
@@ -932,26 +933,26 @@ public fun borrow<T, C>(
         collateral_type: type_name::get<C>(),
         borrowed_amount: borrow_amount,
         accrued_interest: 0,
-        created_at: clock::timestamp_ms(clock) / 1000,
-        last_updated: clock::timestamp_ms(clock) / 1000,
+        created_at: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
+        last_updated: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
         term_type: TERM_TYPE_INDEFINITE,
         maturity_time: option::none(),
         status: POSITION_STATUS_ACTIVE,
     };
     
-    // Update pool statistics
-    pool.total_borrowed = pool.total_borrowed + borrow_amount;
-    pool.active_positions = pool.active_positions + 1;
-    pool.stats.total_borrowers = pool.stats.total_borrowers + 1;
+    // Update pool statistics with overflow protection
+    pool.total_borrowed = safe_math::safe_add(pool.total_borrowed, borrow_amount);
+    pool.active_positions = safe_math::safe_add(pool.active_positions, 1);
+    pool.stats.total_borrowers = safe_math::safe_add(pool.stats.total_borrowers, 1);
     
     // Update user account activity and points
     account::update_user_activity_for_module(account, account_cap, ctx);
     
-    // Calculate borrowing points based on amount and user level
-    let base_borrow_points = borrow_amount / 1000; // 1 point per 1000 units
+    // Calculate borrowing points based on amount and user level with safe division
+    let base_borrow_points = safe_math::safe_div(borrow_amount, 1000); // 1 point per 1000 units
     let user_level = account::get_level(account);
     let level_bonus_points = calculate_level_bonus_points(user_level, base_borrow_points);
-    let total_borrow_points = base_borrow_points + level_bonus_points;
+    let total_borrow_points = safe_math::safe_add(base_borrow_points, level_bonus_points);
     
     if (total_borrow_points > 0) {
         account::add_user_points_for_module(account, account_cap, total_borrow_points);
@@ -967,7 +968,7 @@ public fun borrow<T, C>(
         collateral_amount,
         borrowed_amount: borrow_amount,
         position_id,
-        timestamp: clock::timestamp_ms(clock) / 1000,
+        timestamp: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
     });
     
     (borrowed_asset, position)
@@ -998,8 +999,8 @@ public fun borrow_fixed_term<T, C>(
     );
     
     // Update position to fixed term
-    let current_time = clock::timestamp_ms(clock) / 1000;
-    let maturity_time = current_time + (term_days * 86400); // Convert days to seconds
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    let maturity_time = safe_math::safe_add(current_time, safe_math::safe_mul(term_days, 86400)); // Convert days to seconds
     
     position.term_type = TERM_TYPE_FIXED;
     position.maturity_time = option::some(maturity_time);
@@ -1102,8 +1103,8 @@ public fun repay<T>(
     // Snapshot amounts before mutation
     let original_principal = position.borrowed_amount;
     let original_interest = position.accrued_interest;
-    // Calculate total debt (principal + accrued interest)
-    let total_debt = original_principal + original_interest;
+    // Calculate total debt (principal + accrued interest) with overflow protection
+    let total_debt = safe_math::safe_add(original_principal, original_interest);
     
     // Determine actual repayment amount (cannot exceed total debt)
     let actual_repay_amount = if (repay_amount >= total_debt) {
@@ -1112,10 +1113,11 @@ public fun repay<T>(
         repay_amount
     };
     
-    // Split repayment coin if necessary
+    // Split repayment coin if necessary with safe subtraction
     let (actual_repay_coin, remaining_coin) = if (repay_amount > actual_repay_amount) {
         let mut repay_coin = repay_asset;
-        let remaining = coin::split(&mut repay_coin, repay_amount - actual_repay_amount, ctx);
+        let remaining_amount = safe_math::safe_sub(repay_amount, actual_repay_amount);
+        let remaining = coin::split(&mut repay_coin, remaining_amount, ctx);
         (repay_coin, remaining)
     } else {
         (repay_asset, coin::zero<T>(ctx))
@@ -1131,8 +1133,8 @@ public fun repay<T>(
         position.accrued_interest = 0;
         position.status = POSITION_STATUS_CLOSED;
         
-        // Update pool statistics
-        pool.active_positions = pool.active_positions - 1;
+        // Update pool statistics with safe subtraction
+        pool.active_positions = safe_math::safe_sub(pool.active_positions, 1);
         
         // Remove position from user account
         account::remove_position(account, account_cap, position.position_id);
@@ -1160,7 +1162,7 @@ public fun repay<T>(
         pool.total_borrowed = 0;
     };
     
-    position.last_updated = clock::timestamp_ms(clock) / 1000;
+    position.last_updated = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
     
     // Update user account activity and points
     account::update_user_activity_for_module(account, account_cap, ctx);
@@ -1201,7 +1203,7 @@ public fun repay<T>(
         borrower: tx_context::sender(ctx),
         repay_amount: actual_repay_amount,
         position_id: position.position_id,
-        timestamp: clock::timestamp_ms(clock) / 1000,
+        timestamp: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
     });
     
     // Return true if position is fully closed
@@ -1298,8 +1300,8 @@ public fun update_pool_interest<T>(
         return
     };
     
-    let current_time = clock::timestamp_ms(clock) / 1000;
-    let time_elapsed = current_time - pool.stats.last_interest_update;
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    let time_elapsed = safe_math::safe_sub(current_time, pool.stats.last_interest_update);
     
     // Skip if less than 1 second has passed
     if (time_elapsed == 0) {
@@ -1309,23 +1311,24 @@ public fun update_pool_interest<T>(
     // Calculate current interest rate based on model
     let current_rate = calculate_current_interest_rate(pool);
     
-    // Calculate interest amount for the elapsed time with overflow protection
+    // Calculate interest amount for the elapsed time with SafeMath overflow protection
     let interest_amount = if (pool.total_borrowed > 0) {
-        // Check for potential overflow before multiplication
-        let denominator = BASIS_POINTS * SECONDS_PER_YEAR;
-        let max_safe_borrowed = 18446744073709551615u64 / (current_rate * time_elapsed); // u64::MAX / (rate * time)
-        assert!(pool.total_borrowed <= max_safe_borrowed, EArithmeticOverflow);
+        let denominator = safe_math::safe_mul(BASIS_POINTS, SECONDS_PER_YEAR);
         
-        // Annual rate to per-second rate: rate / SECONDS_PER_YEAR
-        // Interest = principal * rate * time
-        (pool.total_borrowed * current_rate * time_elapsed) / denominator
+        // Use SafeMath for compound interest calculation
+        safe_math::calculate_compound_interest_safe(
+            pool.total_borrowed,
+            current_rate,
+            time_elapsed,
+            denominator
+        ) - pool.total_borrowed // Subtract principal to get just the interest
     } else {
         0
     };
     
     if (interest_amount > 0) {
-        // Update pool statistics
-        pool.stats.total_interest_paid = pool.stats.total_interest_paid + interest_amount;
+        // Update pool statistics with overflow protection
+        pool.stats.total_interest_paid = safe_math::safe_add(pool.stats.total_interest_paid, interest_amount);
         pool.stats.current_apr = current_rate;
         
         // Emit interest accrual event
@@ -1347,8 +1350,8 @@ fun update_position_interest_with_level_discount<T>(
     account: &Account,
     clock: &Clock,
 ) {
-    let current_time = clock::timestamp_ms(clock) / 1000;
-    let time_elapsed = current_time - position.last_updated;
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    let time_elapsed = safe_math::safe_sub(current_time, position.last_updated);
     
     if (time_elapsed == 0 || position.borrowed_amount == 0) {
         return
@@ -1357,14 +1360,16 @@ fun update_position_interest_with_level_discount<T>(
     // Calculate interest rate with user level discount
     let current_rate = calculate_interest_rate_with_level_discount(pool, account);
     
-    // Calculate interest for this position with overflow protection
-    let denominator = BASIS_POINTS * SECONDS_PER_YEAR;
-    let max_safe_borrowed = 18446744073709551615u64 / (current_rate * time_elapsed + 1); // u64::MAX / (rate * time), +1 to avoid division by zero
-    assert!(position.borrowed_amount <= max_safe_borrowed, EArithmeticOverflow);
+    // Calculate interest for this position with SafeMath overflow protection
+    let denominator = safe_math::safe_mul(BASIS_POINTS, SECONDS_PER_YEAR);
     
-    let position_interest = (position.borrowed_amount * current_rate * time_elapsed) / denominator;
+    let position_interest = safe_math::safe_mul_div(
+        safe_math::safe_mul(position.borrowed_amount, current_rate),
+        time_elapsed,
+        denominator
+    );
     
-    position.accrued_interest = position.accrued_interest + position_interest;
+    position.accrued_interest = safe_math::safe_add(position.accrued_interest, position_interest);
     position.last_updated = current_time;
 }
 
@@ -1375,7 +1380,7 @@ fun calculate_current_interest_rate<T>(pool: &BorrowingPool<T>): u64 {
         INTEREST_MODEL_DYNAMIC => {
             // Dynamic rate: base_rate + risk_premium + utilization_based_adjustment
             // Note: For borrowing pools, we don't have total_deposits, so we use a simplified model
-            pool.base_rate + pool.risk_premium
+            safe_math::safe_add(pool.base_rate, pool.risk_premium)
         },
         INTEREST_MODEL_FIXED => {
             // Fixed rate model
@@ -1431,8 +1436,8 @@ fun calculate_level_interest_discount(user_level: u8): u64 {
 /// Calculate bonus credit points for early repayment
 /// Rewards users who repay before significant interest accrues
 fun calculate_early_repayment_bonus(position: &BorrowPosition, clock: &Clock): u64 {
-    let current_time = clock::timestamp_ms(clock) / 1000;
-    let position_age = current_time - position.created_at;
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    let position_age = safe_math::safe_sub(current_time, position.created_at);
     
     // Early repayment bonus based on how quickly the loan is repaid
     // Within 1 day: 50% bonus
@@ -1453,7 +1458,7 @@ fun calculate_early_repayment_bonus(position: &BorrowPosition, clock: &Clock): u
     let base_bonus = position.borrowed_amount / 2000; // 1 bonus point per 2000 units
     
     // Apply multiplier
-    (base_bonus * bonus_multiplier) / 100
+    safe_math::safe_mul_div(base_bonus, bonus_multiplier, 100)
 }
 
 /// Calculate credit points penalty for overdue positions
@@ -1464,8 +1469,8 @@ fun calculate_overdue_points_penalty(position: &BorrowPosition, clock: &Clock): 
     };
     
     let maturity_time = *option::borrow(&position.maturity_time);
-    let current_time = clock::timestamp_ms(clock) / 1000;
-    let overdue_days = (current_time - maturity_time) / 86400; // Convert to days
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    let overdue_days = safe_math::safe_div(safe_math::safe_sub(current_time, maturity_time), 86400); // Convert to days
     
     if (overdue_days == 0) {
         return 0
@@ -1490,7 +1495,7 @@ fun calculate_overdue_points_penalty(position: &BorrowPosition, clock: &Clock): 
         5 // 5x penalty for long overdue
     };
     
-    base_penalty * penalty_multiplier
+    safe_math::safe_mul(base_penalty, penalty_multiplier)
 }
 
 /// Calculate bonus points based on user level
@@ -1513,7 +1518,7 @@ fun calculate_level_bonus_points(user_level: u8, base_points: u64): u64 {
         0  // No bonus for bronze users (level 1-2)
     };
     
-    (base_points * bonus_percentage) / 100
+    safe_math::safe_mul_div(base_points, bonus_percentage, 100)
 }
 
 // ===== Term and Maturity Management Functions =====
@@ -1529,7 +1534,7 @@ public fun is_position_overdue(position: &BorrowPosition, clock: &Clock): bool {
     };
     
     let maturity_time = *option::borrow(&position.maturity_time);
-    let current_time = clock::timestamp_ms(clock) / 1000;
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
     
     current_time > maturity_time
 }
@@ -1541,9 +1546,9 @@ public fun is_position_in_grace_period(position: &BorrowPosition, clock: &Clock)
     };
     
     let maturity_time = *option::borrow(&position.maturity_time);
-    let current_time = clock::timestamp_ms(clock) / 1000;
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
     
-    (current_time - maturity_time) <= OVERDUE_GRACE_PERIOD
+    safe_math::safe_sub(current_time, maturity_time) <= OVERDUE_GRACE_PERIOD
 }
 
 /// Calculate overdue penalty for a position
@@ -1553,8 +1558,8 @@ public fun calculate_overdue_penalty(position: &BorrowPosition, clock: &Clock): 
     };
     
     let maturity_time = *option::borrow(&position.maturity_time);
-    let current_time = clock::timestamp_ms(clock) / 1000;
-    let overdue_days = (current_time - maturity_time) / 86400; // Convert to days
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    let overdue_days = safe_math::safe_div(safe_math::safe_sub(current_time, maturity_time), 86400); // Convert to days
     
     if (overdue_days == 0) {
         return 0
@@ -1562,8 +1567,8 @@ public fun calculate_overdue_penalty(position: &BorrowPosition, clock: &Clock): 
     
     // Calculate penalty: principal * penalty_rate * overdue_days / 365
     let principal = position.borrowed_amount;
-    let annual_penalty = (principal * OVERDUE_PENALTY_RATE) / BASIS_POINTS;
-    (annual_penalty * overdue_days) / 365
+    let annual_penalty = safe_math::safe_mul_div(principal, OVERDUE_PENALTY_RATE, BASIS_POINTS);
+    safe_math::safe_mul_div(annual_penalty, overdue_days, 365)
 }
 
 /// Update position with overdue penalty and deduct credit points
@@ -1574,8 +1579,8 @@ fun apply_overdue_penalty(position: &mut BorrowPosition, clock: &Clock) {
     
     let penalty = calculate_overdue_penalty(position, clock);
     if (penalty > 0) {
-        position.accrued_interest = position.accrued_interest + penalty;
-        position.last_updated = clock::timestamp_ms(clock) / 1000;
+        position.accrued_interest = safe_math::safe_add(position.accrued_interest, penalty);
+        position.last_updated = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
     };
 }
 
@@ -1593,8 +1598,8 @@ fun apply_overdue_penalty_with_account(
     
     let penalty = calculate_overdue_penalty(position, clock);
     if (penalty > 0) {
-        position.accrued_interest = position.accrued_interest + penalty;
-        position.last_updated = clock::timestamp_ms(clock) / 1000;
+        position.accrued_interest = safe_math::safe_add(position.accrued_interest, penalty);
+        position.last_updated = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
         
         // Calculate credit points to deduct based on overdue severity
         let overdue_points_penalty = calculate_overdue_points_penalty(position, clock);
@@ -1620,7 +1625,7 @@ public fun get_days_until_maturity(position: &BorrowPosition, clock: &Clock): u6
     };
     
     let maturity_time = *option::borrow(&position.maturity_time);
-    let current_time = clock::timestamp_ms(clock) / 1000;
+    let current_time = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
     
     if (current_time >= maturity_time) {
         return 0 // Already overdue
