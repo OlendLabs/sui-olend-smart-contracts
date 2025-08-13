@@ -11,6 +11,7 @@ use sui::event;
 
 use olend::constants;
 use olend::errors;
+use olend::circuit_breaker::{Self, CircuitBreakerRegistry};
 use olend::vault::{Self, Vault};
 use olend::ytoken::{YToken};
 use olend::account::{Self, Account, AccountCap};
@@ -455,6 +456,42 @@ public fun deposit<T>(
     ytoken_coin
 }
 
+/// Enhanced deposit function with circuit breaker protection
+public fun deposit_with_circuit_breaker<T>(
+    pool: &mut LendingPool<T>,
+    vault: &mut Vault<T>,
+    account: &mut Account,
+    account_cap: &AccountCap,
+    asset: Coin<T>,
+    circuit_breaker_registry: &mut CircuitBreakerRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext
+): Coin<YToken<T>> {
+    // Check circuit breaker first
+    assert!(
+        circuit_breaker::check_operation_allowed(
+            circuit_breaker_registry,
+            circuit_breaker::operation_vault_deposit(),
+            tx_context::sender(ctx),
+            clock
+        ),
+        EDepositsNotAllowed
+    );
+    
+    // Execute deposit
+    let result = deposit(pool, vault, account, account_cap, asset, clock, ctx);
+    
+    // Record successful operation
+    circuit_breaker::record_operation_result(
+        circuit_breaker_registry,
+        circuit_breaker::operation_vault_deposit(),
+        true, // success
+        clock
+    );
+    
+    result
+}
+
 /// Withdraw assets from the lending pool
 /// User burns YToken shares and receives underlying assets from the Vault
 public fun withdraw<T>(
@@ -531,6 +568,42 @@ public fun withdraw<T>(
     });
     
     withdrawn_asset
+}
+
+/// Enhanced withdrawal function with circuit breaker protection
+public fun withdraw_with_circuit_breaker<T>(
+    pool: &mut LendingPool<T>,
+    vault: &mut Vault<T>,
+    account: &mut Account,
+    account_cap: &AccountCap,
+    ytoken_coin: Coin<YToken<T>>,
+    circuit_breaker_registry: &mut CircuitBreakerRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext
+): Coin<T> {
+    // Check circuit breaker first
+    assert!(
+        circuit_breaker::check_operation_allowed(
+            circuit_breaker_registry,
+            circuit_breaker::operation_vault_withdraw(),
+            tx_context::sender(ctx),
+            clock
+        ),
+        EWithdrawalsNotAllowed
+    );
+    
+    // Execute withdrawal
+    let result = withdraw(pool, vault, account, account_cap, ytoken_coin, clock, ctx);
+    
+    // Record successful operation
+    circuit_breaker::record_operation_result(
+        circuit_breaker_registry,
+        circuit_breaker::operation_vault_withdraw(),
+        true, // success
+        clock
+    );
+    
+    result
 }
 
 // ===== Interest Rate Management =====

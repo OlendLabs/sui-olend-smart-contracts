@@ -368,7 +368,8 @@
 
 在 BorrowingPool 中集成 Tick 清算机制和 DEX 流动性提供。
 
-- [ ] 6.1 在 BorrowingPool 中实现 Tick 清算
+- [-] 6.1 在 BorrowingPool 中实现 Tick 清算
+
   - 在现有 BorrowingPool<T> 中添加清算功能
   - 实现按抵押率区间分组的 Tick 清算机制
   - 实现动态 Tick 大小调整（0.1%-0.5%）

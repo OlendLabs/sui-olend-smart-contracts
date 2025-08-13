@@ -1899,3 +1899,38 @@ public fun circuit_breaker_config_recovery_duration(config: &CircuitBreakerConfi
 
 // ===== Manipulation Detection Result Accessors =====
 
+// ===== ValidatedPriceInfo Accessor Functions =====
+// Note: These functions replace the duplicate ones that were causing compilation errors
+
+// ===== ManipulationDetectionResult Accessor Functions =====
+
+/// Check if manipulation was detected
+public fun manipulation_detection_result_is_manipulation(result: &ManipulationDetectionResult): bool {
+    result.is_manipulation
+}
+
+/// Get risk level from manipulation detection result
+public fun manipulation_detection_result_risk_level(result: &ManipulationDetectionResult): u8 {
+    result.risk_level
+}
+
+/// Get pattern type from manipulation detection result
+public fun manipulation_detection_result_pattern_type(result: &ManipulationDetectionResult): u8 {
+    result.pattern_type
+}
+
+/// Get confidence score from manipulation detection result
+public fun manipulation_detection_result_confidence_score(result: &ManipulationDetectionResult): u64 {
+    result.confidence_score
+}
+
+/// Get deviation percentage from manipulation detection result
+public fun manipulation_detection_result_deviation_percentage(result: &ManipulationDetectionResult): u64 {
+    result.deviation_percentage
+}
+
+/// Get recommended action from manipulation detection result
+public fun manipulation_detection_result_action_recommended(result: &ManipulationDetectionResult): vector<u8> {
+    result.action_recommended
+}
+

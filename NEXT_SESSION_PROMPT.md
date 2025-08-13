@@ -1,250 +1,176 @@
-# 下一个会话任务：实现多资产抵押支持（任务5.4）
+# Olend DeFi 平台 - 下一个任务会话 Prompt
 
-## 任务概述
+## 🎯 任务概述
 
-请继续实现Olend DeFi借贷平台的任务5.4：**实现多资产抵押支持**。
+**当前任务**: 实现高效清算系统 (任务6)  
+**优先级**: 中高  
+**预计时间**: 1-2周  
+**状态**: 待开始  
 
-## 当前状态
+## 📋 项目背景
 
-- ✅ 任务5.3"实现高抵押率管理"已完成
-- 🎯 下一个任务：5.4"实现多资产抵押支持"
+Olend DeFi 是基于 Sui Network 的去中心化借贷平台，目前已完成：
 
-## 任务5.4具体要求
+### ✅ 已完成的核心功能
+- **Vault 系统**: ERC-4626兼容的统一流动性管理 (Shared Object)
+- **Account 系统**: 用户积分等级系统，权限控制
+- **Oracle 系统**: Pyth Network 预言机集成，实时价格数据
+- **LendingPool 系统**: 存取资产，动态利率模型，积分奖励
+- **BorrowingPool 系统**: 高抵押率借款(最高97%)，单资产抵押支持
+- **测试覆盖**: 324个测试全部通过，完整的单元测试
 
-根据 `.kiro/specs/olend-defi-platform/tasks.md` 中的定义：
+### 🎯 当前任务目标
 
-```markdown
-- [ ] 5.4 实现多资产抵押支持
-  - 支持多种 YToken 作为抵押物
-  - 实现加权平均方法计算综合抵押率
-  - 实现多资产价格波动的实时监控
-  - 实现抵押组合的动态调整功能
-  - _需求: 5.35, 5.36, 5.37, 5.38_
+实现**高效清算系统**，包括：
+1. **Tick 清算机制**: 按抵押率区间分组的批量清算
+2. **部分清算逻辑**: 每次清算部分抵押物直到安全
+3. **低清算罚金**: 低至0.1%的清算罚金机制
+4. **DEX 流动性集成**: 与 Cetus、Bluefin、DEEPBook 集成
+5. **清算风险管理**: 限流、价格异常检测、失败处理
+
+## 📁 项目结构
+
+```
+sui-olend-smart-contracts/
+├── sources/
+│   ├── vault.move              ✅ Shared Object, ERC-4626兼容
+│   ├── account.move            ✅ 积分等级系统
+│   ├── oracle.move             ✅ Pyth预言机集成
+│   ├── lending_pool.move       ✅ 借贷池管理
+│   ├── borrowing_pool.move     ✅ 借款池管理 (需要添加清算功能)
+│   ├── liquidity.move          ✅ Registry管理
+│   ├── ytoken.move             ✅ 份额凭证
+│   └── ...
+├── tests/                      ✅ 324个测试全部通过
+└── .kiro/specs/olend-defi-platform/
+    ├── requirements.md         ✅ 完整需求文档
+    ├── design.md              ✅ 架构设计文档
+    └── tasks.md               📍 当前任务列表
 ```
 
-## 相关需求（来自requirements.md）
+## 🔧 技术要求
 
-**需求5.35**: 用户提供多种 YToken 作为抵押时，系统应支持多资产组合抵押并计算总抵押价值
-**需求5.36**: 计算多资产抵押率时，系统应使用加权平均方法计算综合抵押率
-**需求5.37**: 多资产价格波动时，系统应分别监控每种抵押资产的价格变化对总抵押率的影响
-**需求5.38**: 用户调整抵押组合时，系统应支持增加、减少或替换特定类型的抵押资产
+### 核心技术栈
+- **语言**: Sui Move
+- **架构**: Shared Object 模式
+- **测试**: 单元测试 + 集成测试
+- **外部集成**: Pyth Oracle, DEX (Cetus/Bluefin/DEEPBook)
 
-## 当前实现状态分析
+### 关键设计原则
+- **安全第一**: 所有资金操作必须安全可靠
+- **高效清算**: Tick机制实现批量处理
+- **低成本**: 0.1%清算罚金，用户友好
+- **可扩展**: 支持多DEX集成和参数调整
 
-### 现有单资产抵押实现
-当前 `sources/borrowing_pool.move` 中的实现：
+## 📝 具体任务清单
 
-1. **BorrowPosition结构体**：目前只支持单一抵押资产
-   ```move
-   public struct BorrowPosition has key, store {
-       collateral_amount: u64,        // 单一抵押数量
-       collateral_type: TypeName,     // 单一抵押类型
-       collateral_holder_id: ID,      // 单一抵押持有者ID
-       collateral_vault_id: ID,       // 单一抵押库ID
-       // ...
-   }
-   ```
+### 6.1 在 BorrowingPool 中实现 Tick 清算 ⏳
+- [ ] 在现有 `borrowing_pool.move` 中添加清算功能
+- [ ] 实现按抵押率区间分组的 Tick 清算机制
+- [ ] 实现动态 Tick 大小调整（0.1%-0.5%）
+- [ ] 实现同一 Tick 内的批量清算处理
 
-2. **CollateralHolder结构体**：目前只能持有单一类型的抵押物
-   ```move
-   public struct CollateralHolder<phantom C> has key, store {
-       collateral: balance::Balance<YToken<C>>,  // 单一类型抵押物
-       // ...
-   }
-   ```
+### 6.2 实现部分清算逻辑 ⏳
+- [ ] 实现部分清算，每次清算部分抵押物直到安全
+- [ ] 实现清算比例计算，确保头寸回到安全区域
+- [ ] 实现清算停止条件，达到安全界限时停止
+- [ ] 实现连续多轮清算支持
 
-3. **借款函数**：目前只接受单一抵押物
-   ```move
-   public fun borrow<T, C>(
-       collateral: Coin<YToken<C>>,  // 单一抵押物
-       // ...
-   )
-   ```
+### 6.3 实现低清算罚金机制 ⏳
+- [ ] 实现低至0.1%的清算罚金设置
+- [ ] 实现基于资产类型和市场条件的动态罚金
+- [ ] 实现清算罚金在清算者和平台间的分配
+- [ ] 实现清算奖励的计算和分发
 
-## 需要实现的功能
+### 6.4 集成外部 DEX 流动性提供 ⏳
+- [ ] 实现与 Cetus、Bluefin、DEEPBook 的集成接口
+- [ ] 实现清算获得的资产对在 DEX 上提供流动性
+- [ ] 实现 DEX 选择策略和自动切换机制
+- [ ] 实现流动性收益计算和头寸管理
 
-### 1. 多资产抵押数据结构
+### 6.5 实现清算执行流程 ⏳
+- [ ] 实现清算执行者权限验证
+- [ ] 实现抵押资产转换和清算交易执行
+- [ ] 实现清算结果分配和头寸状态更新
+- [ ] 实现清算失败处理和重试机制
 
-需要扩展或重新设计以下结构：
+### 6.6 实现清算风险管理 ⏳
+- [ ] 实现清算限流，避免对池内流动性冲击
+- [ ] 集成预言机进行价格异常检测
+- [ ] 实现清算失败率监控和参数调整
+- [ ] 实现紧急清算和管理员干预
 
-#### 1.1 多资产抵押持有者
-```move
-// 新的多资产抵押持有者结构
-public struct MultiCollateralHolder has key, store {
-    id: UID,
-    position_id: ID,
-    // 存储多种类型的抵押物 - 需要设计合适的数据结构
-    collaterals: Table<TypeName, CollateralInfo>,
-}
+### 6.7 编写清算系统测试 ⏳
+- [ ] 在 `tests/test_borrowing_pool.move` 中添加清算测试
+- [ ] 测试 Tick 清算机制的正确性
+- [ ] 测试部分清算和安全停止逻辑
+- [ ] 测试 DEX 集成和流动性提供
+- [ ] 测试清算风险管理和异常处理
 
-public struct CollateralInfo has store {
-    amount: u64,
-    vault_id: ID,
-    // 其他必要信息
-}
-```
+## 🔍 关键需求参考
 
-#### 1.2 扩展BorrowPosition
-```move
-// 扩展现有BorrowPosition以支持多资产
-public struct BorrowPosition has key, store {
-    // ... 现有字段 ...
-    // 替换单一抵押字段为多资产支持
-    multi_collateral_holder_id: option::Option<ID>,
-    collateral_types: vector<TypeName>,
-    total_collateral_value_usd: u64,  // 总抵押价值（USD）
-}
-```
+从 `requirements.md` 中的相关需求：
 
-### 2. 多资产抵押率计算
+### 清算系统需求 (需求6)
+- **Tick清算**: 按抵押率区间分组，动态调整Tick大小
+- **部分清算**: 每次清算部分抵押物，确保头寸安全
+- **低罚金**: 0.1%清算罚金，用户友好
+- **DEX集成**: 与主流DEX集成，提供流动性
+- **风险管理**: 限流、异常检测、失败处理
 
-#### 2.1 加权平均抵押率计算
-```move
-public fun calculate_multi_asset_ltv<T>(
-    pool: &BorrowingPool<T>,
-    position: &BorrowPosition,
-    multi_collateral_holder: &MultiCollateralHolder,
-    vaults: &vector<&Vault<_>>,  // 多个vault引用
-    oracle: &PriceOracle,
-    clock: &Clock,
-): u64
-```
+## 🧪 测试要求
 
-#### 2.2 单个资产对总抵押率的贡献计算
-```move
-public fun calculate_asset_contribution<T, C>(
-    asset_amount: u64,
-    asset_price: u64,
-    total_collateral_value: u64,
-): u64
-```
+### 测试覆盖目标
+- **单元测试**: 每个清算函数的独立测试
+- **集成测试**: 与现有系统的集成测试
+- **边界测试**: 极端情况和异常处理
+- **性能测试**: 批量清算的性能验证
 
-### 3. 多资产借款功能
+### 现有测试基础
+- 当前有324个测试全部通过
+- 需要在现有测试基础上扩展清算相关测试
+- 确保新功能不破坏现有功能
 
-#### 3.1 多资产借款函数
-```move
-public fun borrow_with_multi_collateral<T>(
-    pool: &mut BorrowingPool<T>,
-    borrow_vault: &mut Vault<T>,
-    account: &mut Account,
-    account_cap: &AccountCap,
-    collaterals: vector<CollateralInput>,  // 多种抵押物输入
-    borrow_amount: u64,
-    oracle: &PriceOracle,
-    clock: &Clock,
-    ctx: &mut TxContext
-): (Coin<T>, BorrowPosition)
+## 📊 成功标准
 
-public struct CollateralInput {
-    coin: Coin<YToken<_>>,  // 需要处理泛型
-    vault_ref: &Vault<_>,
-}
-```
+### 功能标准
+- [ ] 所有清算功能按需求实现
+- [ ] Tick清算机制正常工作
+- [ ] DEX集成成功，流动性提供正常
+- [ ] 清算罚金控制在0.1%以内
 
-### 4. 抵押组合管理
+### 质量标准
+- [ ] 所有新增测试通过
+- [ ] 代码覆盖率保持90%以上
+- [ ] 无安全漏洞和资金风险
+- [ ] 性能满足批量清算要求
 
-#### 4.1 添加抵押物
-```move
-public fun add_collateral<T, C>(
-    pool: &mut BorrowingPool<T>,
-    position: &mut BorrowPosition,
-    multi_collateral_holder: &mut MultiCollateralHolder,
-    additional_collateral: Coin<YToken<C>>,
-    collateral_vault: &Vault<C>,
-    oracle: &PriceOracle,
-    clock: &Clock,
-)
-```
+### 集成标准
+- [ ] 与现有BorrowingPool无缝集成
+- [ ] 与Oracle系统正确集成
+- [ ] 与Vault系统安全集成
+- [ ] 不影响现有功能正常运行
 
-#### 4.2 减少抵押物
-```move
-public fun reduce_collateral<T, C>(
-    pool: &mut BorrowingPool<T>,
-    position: &mut BorrowPosition,
-    multi_collateral_holder: &mut MultiCollateralHolder,
-    asset_type: TypeName,
-    reduce_amount: u64,
-    collateral_vault: &Vault<C>,
-    oracle: &PriceOracle,
-    clock: &Clock,
-    ctx: &mut TxContext
-): Coin<YToken<C>>
-```
+## 🚀 开始指令
 
-### 5. 实时监控和风险管理
+请按照以下步骤开始任务：
 
-#### 5.1 多资产价格监控
-```move
-public fun monitor_multi_asset_risk<T>(
-    pool: &BorrowingPool<T>,
-    position: &BorrowPosition,
-    multi_collateral_holder: &MultiCollateralHolder,
-    vaults: &vector<&Vault<_>>,
-    oracle: &PriceOracle,
-    clock: &Clock,
-)
-```
+1. **环境检查**: 确认当前代码状态和测试通过情况
+2. **需求分析**: 详细阅读清算系统需求 (需求6)
+3. **设计规划**: 制定清算系统的技术实现方案
+4. **逐步实现**: 按照6.1-6.7的顺序逐步实现功能
+5. **测试验证**: 每个子任务完成后进行测试验证
 
-#### 5.2 单个资产价格变化影响分析
-```move
-public fun analyze_asset_price_impact<T, C>(
-    position: &BorrowPosition,
-    asset_type: TypeName,
-    old_price: u64,
-    new_price: u64,
-    total_collateral_value: u64,
-): (u64, u64)  // (new_ltv, impact_percentage)
-```
+## 📞 支持资源
 
-## 技术挑战和解决方案
+- **需求文档**: `.kiro/specs/olend-defi-platform/requirements.md`
+- **设计文档**: `.kiro/specs/olend-defi-platform/design.md`
+- **任务列表**: `.kiro/specs/olend-defi-platform/tasks.md`
+- **现有代码**: `sources/` 目录下的所有模块
+- **测试用例**: `tests/` 目录下的测试文件
 
-### 1. 泛型类型处理
-- **挑战**: Move语言中处理多种泛型类型的复杂性
-- **解决方案**: 使用TypeName作为键，结合动态类型检查
+---
 
-### 2. 数据结构设计
-- **挑战**: 如何高效存储和管理多种类型的抵押物
-- **解决方案**: 使用Table<TypeName, CollateralInfo>结构
+**准备开始实现 Olend DeFi 平台的高效清算系统！** 🚀
 
-### 3. 计算复杂性
-- **挑战**: 多资产抵押率计算的复杂性和精度
-- **解决方案**: 分步计算，使用高精度数学运算
-
-## 测试要求
-
-需要创建全面的测试套件：
-
-1. **多资产抵押基础功能测试**
-2. **加权平均抵押率计算测试**
-3. **抵押组合动态调整测试**
-4. **多资产价格波动监控测试**
-5. **边界条件和异常情况测试**
-
-## 实现步骤建议
-
-1. **第一步**: 设计和实现多资产数据结构
-2. **第二步**: 实现多资产抵押率计算逻辑
-3. **第三步**: 扩展借款功能支持多资产
-4. **第四步**: 实现抵押组合管理功能
-5. **第五步**: 实现实时监控和风险管理
-6. **第六步**: 编写全面的测试套件
-7. **第七步**: 集成测试和优化
-
-## 注意事项
-
-1. **向后兼容性**: 确保新的多资产功能不破坏现有的单资产功能
-2. **性能优化**: 多资产计算可能比较复杂，需要注意性能
-3. **安全性**: 多资产抵押增加了攻击面，需要额外的安全检查
-4. **用户体验**: 多资产操作应该对用户友好且直观
-
-## 开始实现
-
-请从任务5.4开始实现，按照上述分析和建议进行开发。记住要：
-
-1. 先更新任务状态为"in_progress"
-2. 逐步实现各个功能模块
-3. 为每个功能编写相应的测试
-4. 确保代码质量和安全性
-5. 完成后更新任务状态为"completed"
-
-祝你实现顺利！
+请确认理解任务要求，然后开始第一个子任务：**6.1 在 BorrowingPool 中实现 Tick 清算**。

@@ -297,6 +297,18 @@ const EPositionNotLiquidatable: u64 = 4011;
 /// Invalid liquidation amount
 const EInvalidLiquidationAmount: u64 = 4012;
 
+/// Invalid liquidation
+const EInvalidLiquidation: u64 = 4013;
+
+/// Invalid collateral holder
+const EInvalidCollateralHolder: u64 = 4014;
+
+/// No liquidation needed
+const ENoLiquidationNeeded: u64 = 4015;
+
+/// Invalid parameters
+const EInvalidParameters: u64 = 4016;
+
 /// Get Borrowing Pool-related error codes
 public fun borrowing_pool_paused(): u64 { EBorrowingPoolPaused }
 public fun insufficient_collateral(): u64 { EInsufficientCollateral }
@@ -310,6 +322,10 @@ public fun borrow_limit_exceeded(): u64 { EBorrowLimitExceeded }
 public fun collateral_ratio_too_high(): u64 { ECollateralRatioTooHigh }
 public fun position_not_liquidatable(): u64 { EPositionNotLiquidatable }
 public fun invalid_liquidation_amount(): u64 { EInvalidLiquidationAmount }
+public fun invalid_liquidation(): u64 { EInvalidLiquidation }
+public fun invalid_collateral_holder(): u64 { EInvalidCollateralHolder }
+public fun no_liquidation_needed(): u64 { ENoLiquidationNeeded }
+public fun invalid_parameters(): u64 { EInvalidParameters }
 
 /// Get Security-related error codes
 public fun oracle_price_stale(): u64 { EOraclePriceStale }

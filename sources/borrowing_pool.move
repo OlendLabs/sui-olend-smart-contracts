@@ -15,6 +15,8 @@ use olend::vault::{Self, Vault};
 use olend::ytoken::{YToken};
 use olend::account::{Self, Account, AccountCap};
 use olend::oracle::{Self, PriceOracle};
+use olend::secure_oracle::{Self, SecurePriceOracle};
+use olend::circuit_breaker::{Self, CircuitBreakerRegistry};
 use olend::safe_math;
 
 // ===== Struct Definitions =====
@@ -339,6 +341,9 @@ const EArithmeticOverflow: u64 = 4013;
 /// Invalid vault exchange rate
 const EInvalidExchangeRate: u64 = 4014;
 
+/// Operation blocked by circuit breaker
+const EOperationBlocked: u64 = 4015;
+
 /// Position status constants
 const POSITION_STATUS_ACTIVE: u8 = 0;
 const POSITION_STATUS_CLOSED: u8 = 3;
@@ -358,6 +363,13 @@ const OVERDUE_GRACE_PERIOD: u64 = 604800;
 
 /// Overdue penalty rate (in basis points, e.g., 500 = 5% annual)
 const OVERDUE_PENALTY_RATE: u64 = 500;
+
+/// Liquidation-related error constants
+const EInvalidLiquidation: u64 = 4016;
+const ELiquidationNotAllowed: u64 = 4017;
+const EInvalidCollateralHolder: u64 = 4018;
+const ENoLiquidationNeeded: u64 = 4019;
+const EInvalidParameters: u64 = 4020;
 
 // ===== Helper Functions =====
 
@@ -674,7 +686,7 @@ fun contains_substring(haystack: &vector<u8>, needle: &vector<u8>): bool {
     false
 }
 
-/// Calculate current collateral ratio for a position
+/// Calculate current collateral ratio for a position with enhanced oracle validation
 public fun calculate_position_ltv<T, C>(
     _pool: &BorrowingPool<T>,
     position: &BorrowPosition,
@@ -682,7 +694,7 @@ public fun calculate_position_ltv<T, C>(
     oracle: &PriceOracle,
     clock: &Clock,
 ): u64 {
-    // Get current prices
+    // Get current prices using basic oracle (fallback)
     let borrow_asset_price_info = oracle::get_price<T>(oracle, clock);
     let collateral_asset_price_info = oracle::get_price<C>(oracle, clock);
     
@@ -700,6 +712,66 @@ public fun calculate_position_ltv<T, C>(
     let collateral_asset_price_raw = oracle::price_info_price(&collateral_asset_price_info);
     let borrow_conf = oracle::price_info_confidence(&borrow_asset_price_info);
     let collateral_conf = oracle::price_info_confidence(&collateral_asset_price_info);
+    
+    // Apply conservative discount using confidence interval
+    let borrow_asset_price = if (borrow_asset_price_raw > borrow_conf) { borrow_asset_price_raw - borrow_conf } else { 0 };
+    let collateral_asset_price = if (collateral_asset_price_raw > collateral_conf) { collateral_asset_price_raw - collateral_conf } else { 0 };
+    assert!(borrow_asset_price > 0 && collateral_asset_price > 0, errors::price_validation_failed());
+    
+    // Convert YToken shares to underlying asset amount with exchange rate validation
+    let collateral_assets = validate_vault_exchange_rate(collateral_vault, position.collateral_amount);
+    assert!(collateral_assets > 0, EInsufficientCollateral);
+    
+    // Calculate total debt (principal + accrued interest) with overflow protection
+    let total_debt = safe_math::safe_add(position.borrowed_amount, position.accrued_interest);
+    
+    // Price scale based on oracle price precision
+    let price_scale: u64 = pow10(constants::price_decimal_precision());
+    
+    // Calculate values in USD with overflow protection
+    let collateral_value_usd = safe_math::safe_mul_div(collateral_assets, collateral_asset_price, price_scale);
+    let debt_value_usd = safe_math::safe_mul_div(total_debt, borrow_asset_price, price_scale);
+    
+    // Avoid division by zero
+    assert!(collateral_value_usd > 0, EInsufficientCollateral);
+    
+    // Calculate LTV: debt_value / collateral_value * 100% with overflow protection
+    safe_math::safe_mul_div(debt_value_usd, BASIS_POINTS, collateral_value_usd)
+}
+
+/// Calculate current collateral ratio for a position with enhanced secure oracle validation
+public fun calculate_position_ltv_secure<T, C>(
+    _pool: &BorrowingPool<T>,
+    position: &BorrowPosition,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    secure_oracle: &SecurePriceOracle,
+    clock: &Clock,
+): u64 {
+    // Get validated prices using secure oracle
+    let borrow_asset_validated_info = secure_oracle::validate_price_comprehensive<T>(secure_oracle, oracle, clock);
+    let collateral_asset_validated_info = secure_oracle::validate_price_comprehensive<C>(secure_oracle, oracle, clock);
+    
+    // Verify validated price data is valid
+    assert!(secure_oracle::validated_price_info_is_valid(&borrow_asset_validated_info), errors::price_validation_failed());
+    assert!(secure_oracle::validated_price_info_is_valid(&collateral_asset_validated_info), errors::price_validation_failed());
+    
+    // Check validation scores meet minimum requirements
+    let borrow_validation_score = secure_oracle::validated_price_info_validation_score(&borrow_asset_validated_info);
+    let collateral_validation_score = secure_oracle::validated_price_info_validation_score(&collateral_asset_validated_info);
+    assert!(borrow_validation_score >= 70, errors::price_validation_failed()); // Minimum 70% validation score
+    assert!(collateral_validation_score >= 70, errors::price_validation_failed());
+    
+    // Check manipulation risk levels
+    let borrow_manipulation_risk = secure_oracle::validated_price_info_manipulation_risk(&borrow_asset_validated_info);
+    let collateral_manipulation_risk = secure_oracle::validated_price_info_manipulation_risk(&collateral_asset_validated_info);
+    assert!(borrow_manipulation_risk < 2, errors::price_validation_failed()); // No high risk
+    assert!(collateral_manipulation_risk < 2, errors::price_validation_failed());
+    
+    let borrow_asset_price_raw = secure_oracle::validated_price_info_price(&borrow_asset_validated_info);
+    let collateral_asset_price_raw = secure_oracle::validated_price_info_price(&collateral_asset_validated_info);
+    let borrow_conf = secure_oracle::validated_price_info_confidence(&borrow_asset_validated_info);
+    let collateral_conf = secure_oracle::validated_price_info_confidence(&collateral_asset_validated_info);
     
     // Apply conservative discount using confidence interval
     let borrow_asset_price = if (borrow_asset_price_raw > borrow_conf) { borrow_asset_price_raw - borrow_conf } else { 0 };
@@ -764,6 +836,148 @@ public fun monitor_position_risk<T, C>(
             timestamp,
         });
     };
+}
+
+/// Enhanced position risk monitoring with secure oracle validation
+public fun monitor_position_risk_secure<T, C>(
+    pool: &BorrowingPool<T>,
+    position: &BorrowPosition,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    secure_oracle: &SecurePriceOracle,
+    clock: &Clock,
+) {
+    if (!pool.risk_monitoring_config.risk_alert_enabled) {
+        return
+    };
+    
+    // Try to use secure oracle first, fallback to basic oracle if needed
+    let current_ltv = calculate_position_ltv_secure<T, C>(pool, position, collateral_vault, oracle, secure_oracle, clock);
+    let timestamp = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    
+    // Check oracle health and emit alerts if needed
+    monitor_oracle_health<T>(secure_oracle, oracle, clock);
+    monitor_oracle_health<C>(secure_oracle, oracle, clock);
+    
+    // Check if position is approaching warning threshold
+    if (current_ltv >= pool.warning_ltv && current_ltv < pool.liquidation_ltv) {
+        event::emit(HighCollateralWarningEvent {
+            pool_id: pool.pool_id,
+            position_id: position.position_id,
+            borrower: object::id_to_address(&position.borrower_account),
+            current_ltv,
+            warning_ltv: pool.warning_ltv,
+            timestamp,
+        });
+    };
+    
+    // Check if position is at liquidation risk
+    if (current_ltv >= pool.liquidation_ltv) {
+        event::emit(RiskMonitoringAlertEvent {
+            pool_id: pool.pool_id,
+            alert_type: 2, // liquidation risk
+            position_id: option::some(position.position_id),
+            details: b"Position at liquidation risk with secure oracle validation",
+            timestamp,
+        });
+    };
+}
+
+/// Monitor oracle health and emit alerts for issues
+public fun monitor_oracle_health<T>(
+    secure_oracle: &SecurePriceOracle,
+    oracle: &PriceOracle,
+    clock: &Clock,
+) {
+    let timestamp = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    
+    // Get validated price info
+    let validated_info = secure_oracle::validate_price_comprehensive<T>(secure_oracle, oracle, clock);
+    
+    // Check if price validation failed
+    if (!secure_oracle::validated_price_info_is_valid(&validated_info)) {
+        event::emit(RiskMonitoringAlertEvent {
+            pool_id: 0, // Global alert
+            alert_type: 3, // Oracle health issue
+            position_id: option::none(),
+            details: b"Oracle price validation failed",
+            timestamp,
+        });
+        return
+    };
+    
+    // Check validation score
+    let validation_score = secure_oracle::validated_price_info_validation_score(&validated_info);
+    if (validation_score < 70) {
+        event::emit(RiskMonitoringAlertEvent {
+            pool_id: 0, // Global alert
+            alert_type: 3, // Oracle health issue
+            position_id: option::none(),
+            details: b"Oracle validation score below threshold",
+            timestamp,
+        });
+    };
+    
+    // Check manipulation risk
+    let manipulation_risk = secure_oracle::validated_price_info_manipulation_risk(&validated_info);
+    if (manipulation_risk >= 2) {
+        event::emit(RiskMonitoringAlertEvent {
+            pool_id: 0, // Global alert
+            alert_type: 3, // Oracle health issue
+            position_id: option::none(),
+            details: b"High manipulation risk detected",
+            timestamp,
+        });
+    };
+}
+
+/// Implement fallback mechanism for oracle failures
+public fun get_price_with_fallback<T>(
+    oracle: &PriceOracle,
+    secure_oracle: &SecurePriceOracle,
+    clock: &Clock,
+): (u64, u64, bool) { // Returns (price, confidence, is_secure)
+    // Try secure oracle first
+    let validated_info = secure_oracle::validate_price_comprehensive<T>(secure_oracle, oracle, clock);
+    
+    if (secure_oracle::validated_price_info_is_valid(&validated_info) && 
+        secure_oracle::validated_price_info_validation_score(&validated_info) >= 70 &&
+        secure_oracle::validated_price_info_manipulation_risk(&validated_info) < 2) {
+        // Secure oracle validation passed
+        return (
+            secure_oracle::validated_price_info_price(&validated_info),
+            secure_oracle::validated_price_info_confidence(&validated_info),
+            true
+        )
+    };
+    
+    // Fallback to basic oracle
+    let basic_price_info = oracle::get_price<T>(oracle, clock);
+    if (oracle::price_info_is_valid(&basic_price_info)) {
+        let now = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+        let price_time = oracle::price_info_timestamp(&basic_price_info);
+        
+        // Check if price is not too stale
+        if (safe_math::safe_sub(now, price_time) <= constants::default_max_price_delay()) {
+            return (
+                oracle::price_info_price(&basic_price_info),
+                oracle::price_info_confidence(&basic_price_info),
+                false
+            )
+        };
+    };
+    
+    // Both oracles failed - this should trigger emergency procedures
+    event::emit(RiskMonitoringAlertEvent {
+        pool_id: 0, // Global alert
+        alert_type: 4, // Oracle failure
+        position_id: option::none(),
+        details: b"All oracle sources failed - emergency mode required",
+        timestamp: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
+    });
+    
+    // Return zero values to indicate failure
+    (0, 0, false)
 }
 
 /// Update position LTV and emit events if significant change
@@ -853,7 +1067,7 @@ public fun borrow<T, C>(
     // Update interest before borrowing
     update_pool_interest(pool, clock);
     
-    // Get asset prices from oracle
+    // Get asset prices from oracle (basic validation)
     let borrow_asset_price_info = oracle::get_price<T>(oracle, clock);
     let collateral_asset_price_info = oracle::get_price<C>(oracle, clock);
     
@@ -960,6 +1174,196 @@ public fun borrow<T, C>(
     
     // Add position to user account
     account::add_position(account, account_cap, position_id);
+    
+    // Emit borrow event
+    event::emit(BorrowEvent {
+        pool_id: pool.pool_id,
+        borrower: tx_context::sender(ctx),
+        collateral_amount,
+        borrowed_amount: borrow_amount,
+        position_id,
+        timestamp: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
+    });
+    
+    (borrowed_asset, position)
+}
+
+/// Enhanced borrow function with secure oracle validation and circuit breaker protection
+/// Creates a new borrow position with comprehensive price validation and manipulation detection
+public fun borrow_secure_with_circuit_breaker<T, C>(
+    pool: &mut BorrowingPool<T>,
+    borrow_vault: &mut Vault<T>,
+    collateral_vault: &mut Vault<C>,
+    account: &mut Account,
+    account_cap: &AccountCap,
+    collateral: Coin<YToken<C>>,
+    borrow_amount: u64,
+    oracle: &PriceOracle,
+    secure_oracle: &SecurePriceOracle,
+    circuit_breaker_registry: &mut CircuitBreakerRegistry,
+    clock: &Clock,
+    ctx: &mut TxContext
+): (Coin<T>, BorrowPosition) {
+    // Check circuit breaker first
+    assert!(
+        circuit_breaker::check_operation_allowed(
+            circuit_breaker_registry,
+            circuit_breaker::operation_borrow(),
+            tx_context::sender(ctx),
+            clock
+        ),
+        EOperationBlocked
+    );
+    // Verify pool version
+    assert!(pool.version == constants::current_version(), errors::version_mismatch());
+    
+    // Verify pool status allows borrowing
+    assert!(pool.status != BorrowingPoolStatus::Inactive, EPoolPaused);
+    assert!(pool.status != BorrowingPoolStatus::Paused, EPoolPaused);
+    assert!(
+        pool.status == BorrowingPoolStatus::Active || pool.status == BorrowingPoolStatus::BorrowingOnly,
+        EBorrowingNotAllowed
+    );
+    
+    // Verify pool configuration
+    assert!(pool.config.borrowing_enabled, EBorrowingNotAllowed);
+    
+    // Verify user identity through account system
+    assert!(account::verify_account_cap(account, account_cap), errors::account_cap_mismatch());
+    // Ensure collateral vault is active for valid conversion
+    assert!(vault::is_vault_active(collateral_vault), errors::invalid_assets());
+    
+    // Collateral in shares (YToken amount)
+    let collateral_amount = coin::value(&collateral);
+    
+    // Validate input amounts
+    assert!(borrow_amount > 0, errors::zero_assets());
+    assert!(borrow_amount >= pool.config.min_borrow, EInsufficientBorrow);
+    assert!(borrow_amount <= pool.max_borrow_limit, EBorrowLimitExceeded);
+    assert!(collateral_amount > 0, errors::zero_assets());
+    assert!(collateral_amount >= pool.config.min_collateral, EInsufficientCollateral);
+    
+    // Update interest before borrowing
+    update_pool_interest(pool, clock);
+    
+    // Get validated asset prices using secure oracle with comprehensive validation
+    let borrow_asset_validated_info = secure_oracle::validate_price_comprehensive<T>(secure_oracle, oracle, clock);
+    let collateral_asset_validated_info = secure_oracle::validate_price_comprehensive<C>(secure_oracle, oracle, clock);
+    
+    // Verify validated price data is valid
+    assert!(secure_oracle::validated_price_info_is_valid(&borrow_asset_validated_info), errors::price_validation_failed());
+    assert!(secure_oracle::validated_price_info_is_valid(&collateral_asset_validated_info), errors::price_validation_failed());
+    
+    // Enhanced validation checks - higher threshold for borrowing operations
+    let borrow_validation_score = secure_oracle::validated_price_info_validation_score(&borrow_asset_validated_info);
+    let collateral_validation_score = secure_oracle::validated_price_info_validation_score(&collateral_asset_validated_info);
+    assert!(borrow_validation_score >= 80, errors::price_validation_failed()); // Higher threshold for borrowing
+    assert!(collateral_validation_score >= 80, errors::price_validation_failed());
+    
+    // Check manipulation risk levels - no high risk allowed for borrowing
+    let borrow_manipulation_risk = secure_oracle::validated_price_info_manipulation_risk(&borrow_asset_validated_info);
+    let collateral_manipulation_risk = secure_oracle::validated_price_info_manipulation_risk(&collateral_asset_validated_info);
+    assert!(borrow_manipulation_risk < 2, errors::price_validation_failed()); // No high risk allowed
+    assert!(collateral_manipulation_risk < 2, errors::price_validation_failed());
+    
+    let borrow_asset_price_raw = secure_oracle::validated_price_info_price(&borrow_asset_validated_info);
+    let collateral_asset_price_raw = secure_oracle::validated_price_info_price(&collateral_asset_validated_info);
+    let borrow_conf = secure_oracle::validated_price_info_confidence(&borrow_asset_validated_info);
+    let collateral_conf = secure_oracle::validated_price_info_confidence(&collateral_asset_validated_info);
+    
+    // Apply conservative discount using confidence interval
+    let borrow_asset_price = if (borrow_asset_price_raw > borrow_conf) { borrow_asset_price_raw - borrow_conf } else { 0 };
+    let collateral_asset_price = if (collateral_asset_price_raw > collateral_conf) { collateral_asset_price_raw - collateral_conf } else { 0 };
+    assert!(borrow_asset_price > 0 && collateral_asset_price > 0, errors::price_validation_failed());
+    
+    // Convert YToken shares to underlying asset amount with exchange rate validation
+    let collateral_assets = validate_vault_exchange_rate(collateral_vault, collateral_amount);
+    assert!(collateral_assets > 0, EInsufficientCollateral);
+    
+    // Price scale based on oracle price precision
+    let price_scale: u64 = pow10(constants::price_decimal_precision());
+    
+    // Calculate collateral value and borrow value in USD using safe order to reduce overflow risk
+    let collateral_value_usd = safe_math::safe_mul_div(collateral_assets, collateral_asset_price, price_scale);
+    let borrow_value_usd = safe_math::safe_mul_div(borrow_amount, borrow_asset_price, price_scale);
+    assert!(collateral_value_usd > 0, EInsufficientCollateral);
+    
+    // Calculate collateral ratio (LTV) with overflow protection
+    let collateral_ratio = safe_math::safe_mul_div(borrow_value_usd, BASIS_POINTS, collateral_value_usd);
+    
+    // Calculate maximum allowed LTV for this asset type and user level
+    let max_allowed_ltv = calculate_max_ltv_for_asset<T, C>(pool, account);
+    
+    // Verify collateral ratio is within safe limits
+    let effective_max_ltv = if (max_allowed_ltv > pool.initial_ltv) { max_allowed_ltv } else { pool.initial_ltv };
+    assert!(collateral_ratio <= effective_max_ltv, ECollateralRatioTooHigh);
+    
+    // Borrow assets from vault
+    let borrowed_asset = vault::borrow(borrow_vault, borrow_amount, ctx);
+    
+    // Create borrow position first
+    let position_uid = object::new(ctx);
+    let position_id = object::uid_to_inner(&position_uid);
+    
+    // Move collateral coin into a balance stored in a shared holder object
+    let collateral_balance = coin::into_balance(collateral);
+    let collateral_holder = CollateralHolder<C> {
+        id: object::new(ctx),
+        position_id,
+        collateral: collateral_balance,
+    };
+    let collateral_holder_id = object::id(&collateral_holder);
+    
+    // Share the collateral holder as a shared object
+    transfer::share_object(collateral_holder);
+    
+    // Create borrow position with reference to the collateral holder id
+    let position = BorrowPosition {
+        id: position_uid,
+        position_id,
+        borrower_account: object::id(account),
+        pool_id: pool.pool_id,
+        collateral_holder_id: collateral_holder_id,
+        collateral_vault_id: object::id(collateral_vault),
+        collateral_amount,
+        collateral_type: type_name::get<C>(),
+        borrowed_amount: borrow_amount,
+        accrued_interest: 0,
+        created_at: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
+        last_updated: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
+        term_type: TERM_TYPE_INDEFINITE,
+        maturity_time: option::none(),
+        status: POSITION_STATUS_ACTIVE,
+    };
+    
+    // Update pool statistics with overflow protection
+    pool.total_borrowed = safe_math::safe_add(pool.total_borrowed, borrow_amount);
+    pool.active_positions = safe_math::safe_add(pool.active_positions, 1);
+    pool.stats.total_borrowers = safe_math::safe_add(pool.stats.total_borrowers, 1);
+    
+    // Update user account activity and points
+    account::update_user_activity_for_module(account, account_cap, ctx);
+    
+    // Calculate borrowing points based on amount and user level with safe division
+    let base_borrow_points = safe_math::safe_div(borrow_amount, 1000); // 1 point per 1000 units
+    let user_level = account::get_level(account);
+    let level_bonus_points = calculate_level_bonus_points(user_level, base_borrow_points);
+    let total_borrow_points = safe_math::safe_add(base_borrow_points, level_bonus_points);
+    
+    if (total_borrow_points > 0) {
+        account::add_user_points_for_module(account, account_cap, total_borrow_points);
+    };
+    
+    // Add position to user account
+    account::add_position(account, account_cap, position_id);
+    
+    // Record successful operation in circuit breaker
+    circuit_breaker::record_operation_result(
+        circuit_breaker_registry,
+        circuit_breaker::operation_borrow(),
+        true, // success
+        clock
+    );
     
     // Emit borrow event
     event::emit(BorrowEvent {
@@ -2062,8 +2466,525 @@ public fun create_pool_with_admin_for_test<T>(
         status: BorrowingPoolStatus::Active,
     }
 }
-#[
-test_only]
+// ===== Liquidation System Functions =====
+
+/// Liquidation tick information for grouping positions by LTV ranges
+public struct LiquidationTick has store, copy, drop {
+    /// Tick range start (in basis points)
+    ltv_start: u64,
+    /// Tick range end (in basis points)
+    ltv_end: u64,
+    /// Number of positions in this tick
+    position_count: u64,
+    /// Total collateral value in this tick (in USD, scaled by price precision)
+    total_collateral_value: u64,
+    /// Total debt value in this tick (in USD, scaled by price precision)
+    total_debt_value: u64,
+}
+
+/// Liquidation queue entry for tracking positions ready for liquidation
+public struct LiquidationQueueEntry has store, copy, drop {
+    /// Position ID
+    position_id: ID,
+    /// Current LTV of the position
+    current_ltv: u64,
+    /// Collateral value (in USD, scaled by price precision)
+    collateral_value: u64,
+    /// Debt value (in USD, scaled by price precision)
+    debt_value: u64,
+    /// Priority score (higher = more urgent)
+    priority_score: u64,
+    /// Timestamp when added to queue
+    queued_at: u64,
+}
+
+/// Liquidation result information
+public struct LiquidationResult has copy, drop {
+    /// Position ID that was liquidated
+    position_id: ID,
+    /// Amount of collateral liquidated
+    collateral_liquidated: u64,
+    /// Amount of debt repaid
+    debt_repaid: u64,
+    /// Liquidation penalty collected
+    penalty_collected: u64,
+    /// Liquidation reward paid to liquidator
+    reward_paid: u64,
+    /// Remaining collateral returned to borrower
+    collateral_returned: u64,
+    /// Whether the position was fully liquidated
+    fully_liquidated: bool,
+}
+
+/// Event emitted when a position is liquidated
+public struct LiquidationEvent has copy, drop {
+    pool_id: u64,
+    position_id: ID,
+    liquidator: address,
+    borrower: address,
+    collateral_liquidated: u64,
+    debt_repaid: u64,
+    penalty_collected: u64,
+    reward_paid: u64,
+    timestamp: u64,
+}
+
+/// Event emitted when liquidation ticks are updated
+public struct LiquidationTickUpdateEvent has copy, drop {
+    pool_id: u64,
+    tick_count: u64,
+    total_liquidatable_positions: u64,
+    timestamp: u64,
+}
+
+/// Calculate liquidation ticks for the pool based on current positions
+/// Groups positions by LTV ranges for efficient batch liquidation
+public fun calculate_liquidation_ticks<T>(
+    pool: &BorrowingPool<T>,
+): vector<LiquidationTick> {
+    let mut ticks = vector::empty<LiquidationTick>();
+    let tick_size = pool.tick_config.tick_size;
+    
+    // Create ticks from liquidation_ltv to 100% (10000 basis points)
+    let mut current_ltv = pool.liquidation_ltv;
+    
+    while (current_ltv < BASIS_POINTS) {
+        let tick_end = if (current_ltv + tick_size > BASIS_POINTS) {
+            BASIS_POINTS
+        } else {
+            current_ltv + tick_size
+        };
+        
+        let tick = LiquidationTick {
+            ltv_start: current_ltv,
+            ltv_end: tick_end,
+            position_count: 0,
+            total_collateral_value: 0,
+            total_debt_value: 0,
+        };
+        
+        vector::push_back(&mut ticks, tick);
+        current_ltv = tick_end;
+    };
+    
+    ticks
+}
+
+/// Check if a position is liquidatable based on its current LTV
+public fun is_position_liquidatable<T, C>(
+    pool: &BorrowingPool<T>,
+    position: &BorrowPosition,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+): bool {
+    // Check if liquidation is enabled for the pool
+    if (!pool.config.liquidation_enabled) {
+        return false
+    };
+    
+    // Calculate current LTV
+    let current_ltv = calculate_position_ltv<T, C>(pool, position, collateral_vault, oracle, clock);
+    
+    // Position is liquidatable if LTV >= liquidation threshold
+    current_ltv >= pool.liquidation_ltv
+}
+
+/// Mark a position as liquidatable and add it to the liquidation queue
+public fun mark_position_liquidatable<T, C>(
+    pool: &BorrowingPool<T>,
+    position: &mut BorrowPosition,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+) {
+    // Verify position is actually liquidatable
+    assert!(is_position_liquidatable<T, C>(pool, position, collateral_vault, oracle, clock), errors::invalid_liquidation());
+    
+    // Update position status to liquidatable
+    position.status = 1; // POSITION_STATUS_LIQUIDATABLE
+    
+    // Emit risk monitoring alert
+    let timestamp = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    event::emit(RiskMonitoringAlertEvent {
+        pool_id: pool.pool_id,
+        alert_type: 2, // liquidation risk
+        position_id: option::some(position.position_id),
+        details: b"Position marked as liquidatable",
+        timestamp,
+    });
+}
+
+/// Calculate the optimal liquidation amount for partial liquidation
+/// Returns the amount of collateral to liquidate to bring position back to safe LTV
+public fun calculate_liquidation_amount<T, C>(
+    pool: &BorrowingPool<T>,
+    position: &BorrowPosition,
+    collateral_vault: &Vault<C>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+): u64 {
+    // Get current prices
+    let borrow_asset_price_info = oracle::get_price<T>(oracle, clock);
+    let collateral_asset_price_info = oracle::get_price<C>(oracle, clock);
+    
+    // Verify price data is valid
+    assert!(oracle::price_info_is_valid(&borrow_asset_price_info), errors::price_validation_failed());
+    assert!(oracle::price_info_is_valid(&collateral_asset_price_info), errors::price_validation_failed());
+    
+    let borrow_asset_price = oracle::price_info_price(&borrow_asset_price_info);
+    let collateral_asset_price = oracle::price_info_price(&collateral_asset_price_info);
+    let price_scale = pow10(constants::price_decimal_precision());
+    
+    // Convert collateral shares to assets
+    let collateral_assets = validate_vault_exchange_rate(collateral_vault, position.collateral_amount);
+    
+    // Calculate total debt
+    let total_debt = safe_math::safe_add(position.borrowed_amount, position.accrued_interest);
+    
+    // Calculate current values in USD
+    let collateral_value_usd = safe_math::safe_mul_div(collateral_assets, collateral_asset_price, price_scale);
+    let debt_value_usd = safe_math::safe_mul_div(total_debt, borrow_asset_price, price_scale);
+    
+    // Target LTV after liquidation (warning_ltv - 1% buffer)
+    let target_ltv = if (pool.warning_ltv >= 100) {
+        pool.warning_ltv - 100 // 1% buffer below warning
+    } else {
+        pool.warning_ltv
+    };
+    
+    // Calculate required collateral value to achieve target LTV
+    // target_ltv = debt_value / required_collateral_value * BASIS_POINTS
+    // required_collateral_value = debt_value * BASIS_POINTS / target_ltv
+    let required_collateral_value = safe_math::safe_mul_div(debt_value_usd, BASIS_POINTS, target_ltv);
+    
+    // If current collateral is already sufficient, no liquidation needed
+    if (collateral_value_usd >= required_collateral_value) {
+        return 0
+    };
+    
+    // Calculate excess collateral to liquidate
+    let excess_collateral_value = safe_math::safe_sub(collateral_value_usd, required_collateral_value);
+    
+    // Convert back to collateral asset amount
+    let liquidation_amount_assets = safe_math::safe_mul_div(excess_collateral_value, price_scale, collateral_asset_price);
+    
+    // Convert to YToken shares
+    let liquidation_amount_shares = vault::convert_to_shares(collateral_vault, liquidation_amount_assets);
+    
+    // Apply maximum liquidation ratio limit
+    let max_liquidation_shares = safe_math::safe_mul_div(
+        position.collateral_amount,
+        pool.tick_config.max_liquidation_ratio,
+        BASIS_POINTS
+    );
+    
+    // Return the minimum of calculated amount and maximum allowed
+    if (liquidation_amount_shares > max_liquidation_shares) {
+        max_liquidation_shares
+    } else {
+        liquidation_amount_shares
+    }
+}
+
+/// Execute partial liquidation of a position
+/// This is the core liquidation function that implements the Tick liquidation mechanism
+public fun liquidate_position<T, C>(
+    pool: &mut BorrowingPool<T>,
+    position: &mut BorrowPosition,
+    collateral_holder: &mut CollateralHolder<C>,
+    collateral_vault: &mut Vault<C>,
+    borrow_vault: &mut Vault<T>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+    ctx: &mut TxContext
+): LiquidationResult {
+    // Verify liquidation is enabled
+    assert!(pool.config.liquidation_enabled, errors::liquidation_not_allowed());
+    
+    // Verify position is liquidatable
+    assert!(is_position_liquidatable<T, C>(pool, position, collateral_vault, oracle, clock), errors::invalid_liquidation());
+    
+    // Verify collateral holder matches position
+    assert!(collateral_holder.position_id == position.position_id, errors::invalid_collateral_holder());
+    
+    // Calculate liquidation amount
+    let liquidation_amount = calculate_liquidation_amount<T, C>(pool, position, collateral_vault, oracle, clock);
+    assert!(liquidation_amount > 0, errors::no_liquidation_needed());
+    
+    // Ensure we don't liquidate more than available collateral
+    let available_collateral = balance::value(&collateral_holder.collateral);
+    let actual_liquidation_amount = if (liquidation_amount > available_collateral) {
+        available_collateral
+    } else {
+        liquidation_amount
+    };
+    
+    // Extract collateral from holder
+    let liquidated_collateral_balance = balance::split(&mut collateral_holder.collateral, actual_liquidation_amount);
+    let liquidated_collateral = coin::from_balance(liquidated_collateral_balance, ctx);
+    
+    // Convert YToken to underlying asset
+    let liquidated_ytoken = coin::into_balance(liquidated_collateral);
+    let liquidated_ytoken_coin = coin::from_balance(liquidated_ytoken, ctx);
+    let liquidated_assets = vault::withdraw(collateral_vault, liquidated_ytoken_coin);
+    let liquidated_asset_amount = coin::value(&liquidated_assets);
+    
+    // Get asset prices for value calculation
+    let borrow_asset_price_info = oracle::get_price<T>(oracle, clock);
+    let collateral_asset_price_info = oracle::get_price<C>(oracle, clock);
+    let borrow_asset_price = oracle::price_info_price(&borrow_asset_price_info);
+    let collateral_asset_price = oracle::price_info_price(&collateral_asset_price_info);
+    let price_scale = pow10(constants::price_decimal_precision());
+    
+    // Calculate liquidated collateral value in USD
+    let liquidated_value_usd = safe_math::safe_mul_div(liquidated_asset_amount, collateral_asset_price, price_scale);
+    
+    // Calculate liquidation penalty and reward
+    let penalty_value_usd = safe_math::safe_mul_div(liquidated_value_usd, pool.tick_config.liquidation_penalty, BASIS_POINTS);
+    let reward_value_usd = safe_math::safe_mul_div(liquidated_value_usd, pool.tick_config.liquidation_reward, BASIS_POINTS);
+    
+    // Calculate debt to repay (liquidated value - penalty)
+    let debt_repay_value_usd = safe_math::safe_sub(liquidated_value_usd, penalty_value_usd);
+    let debt_repay_amount = safe_math::safe_mul_div(debt_repay_value_usd, price_scale, borrow_asset_price);
+    
+    // Ensure we don't repay more than the total debt
+    let total_debt = safe_math::safe_add(position.borrowed_amount, position.accrued_interest);
+    let actual_debt_repay = if (debt_repay_amount > total_debt) {
+        total_debt
+    } else {
+        debt_repay_amount
+    };
+    
+    // Calculate actual penalty and reward based on actual debt repaid
+    let actual_penalty_value = safe_math::safe_mul_div(actual_debt_repay, borrow_asset_price, price_scale);
+    let actual_penalty_amount = safe_math::safe_mul_div(actual_penalty_value, pool.tick_config.liquidation_penalty, BASIS_POINTS);
+    let actual_reward_amount = safe_math::safe_mul_div(actual_penalty_value, pool.tick_config.liquidation_reward, BASIS_POINTS);
+    
+    // Split liquidated assets for debt repayment, penalty, and reward
+    let debt_repay_coin = coin::split(&mut liquidated_assets, actual_debt_repay, ctx);
+    let penalty_coin = if (coin::value(&liquidated_assets) >= actual_penalty_amount) {
+        coin::split(&mut liquidated_assets, actual_penalty_amount, ctx)
+    } else {
+        coin::zero<C>(ctx)
+    };
+    let reward_coin = if (coin::value(&liquidated_assets) >= actual_reward_amount) {
+        coin::split(&mut liquidated_assets, actual_reward_amount, ctx)
+    } else {
+        coin::zero<C>(ctx)
+    };
+    
+    // Convert debt repay to borrow asset and repay to vault
+    let debt_repay_ytoken = vault::deposit(collateral_vault, debt_repay_coin);
+    let debt_repay_balance = coin::into_balance(coin::from_balance(balance::zero<YToken<C>>(), ctx));
+    // Note: In a real implementation, we would need to swap the collateral asset to borrow asset
+    // For now, we'll assume direct repayment (this would need DEX integration)
+    
+    // Update position debt
+    if (actual_debt_repay >= position.borrowed_amount) {
+        let interest_repaid = safe_math::safe_sub(actual_debt_repay, position.borrowed_amount);
+        position.borrowed_amount = 0;
+        position.accrued_interest = if (interest_repaid >= position.accrued_interest) {
+            0
+        } else {
+            safe_math::safe_sub(position.accrued_interest, interest_repaid)
+        };
+    } else {
+        position.borrowed_amount = safe_math::safe_sub(position.borrowed_amount, actual_debt_repay);
+    };
+    
+    // Update position collateral amount
+    position.collateral_amount = safe_math::safe_sub(position.collateral_amount, actual_liquidation_amount);
+    
+    // Check if position should be closed (no collateral or debt remaining)
+    let fully_liquidated = position.collateral_amount == 0 || (position.borrowed_amount == 0 && position.accrued_interest == 0);
+    if (fully_liquidated) {
+        position.status = 2; // POSITION_STATUS_LIQUIDATED
+        pool.active_positions = safe_math::safe_sub(pool.active_positions, 1);
+    } else {
+        // Check if position is still liquidatable
+        if (!is_position_liquidatable<T, C>(pool, position, collateral_vault, oracle, clock)) {
+            position.status = 0; // POSITION_STATUS_ACTIVE
+        }
+    };
+    
+    // Update pool statistics
+    pool.stats.total_liquidations = safe_math::safe_add(pool.stats.total_liquidations, 1);
+    pool.stats.total_liquidation_penalties = safe_math::safe_add(pool.stats.total_liquidation_penalties, actual_penalty_amount);
+    
+    // Transfer penalty to pool reserves (in a real implementation)
+    // For now, we'll burn the penalty coins
+    coin::destroy_zero(penalty_coin);
+    
+    // Transfer reward to liquidator
+    let liquidator = tx_context::sender(ctx);
+    if (coin::value(&reward_coin) > 0) {
+        transfer::public_transfer(reward_coin, liquidator);
+    } else {
+        coin::destroy_zero(reward_coin);
+    };
+    
+    // Return remaining collateral to borrower (if any)
+    let remaining_collateral = coin::value(&liquidated_assets);
+    if (remaining_collateral > 0) {
+        // In a real implementation, this would be returned to the borrower
+        // For now, we'll add it back to the collateral holder
+        let remaining_balance = coin::into_balance(liquidated_assets);
+        balance::join(&mut collateral_holder.collateral, remaining_balance);
+    } else {
+        coin::destroy_zero(liquidated_assets);
+    };
+    
+    // Emit liquidation event
+    let timestamp = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    event::emit(LiquidationEvent {
+        pool_id: pool.pool_id,
+        position_id: position.position_id,
+        liquidator,
+        borrower: position.borrower_account, // This should be the borrower's address
+        collateral_liquidated: actual_liquidation_amount,
+        debt_repaid: actual_debt_repay,
+        penalty_collected: actual_penalty_amount,
+        reward_paid: coin::value(&reward_coin),
+        timestamp,
+    });
+    
+    // Return liquidation result
+    LiquidationResult {
+        position_id: position.position_id,
+        collateral_liquidated: actual_liquidation_amount,
+        debt_repaid: actual_debt_repay,
+        penalty_collected: actual_penalty_amount,
+        reward_paid: actual_reward_amount,
+        collateral_returned: remaining_collateral,
+        fully_liquidated,
+    }
+}
+
+/// Batch liquidate multiple positions in the same tick for efficiency
+/// This implements the core Tick liquidation mechanism
+public fun batch_liquidate_tick<T, C>(
+    pool: &mut BorrowingPool<T>,
+    positions: vector<&mut BorrowPosition>,
+    collateral_holders: vector<&mut CollateralHolder<C>>,
+    collateral_vault: &mut Vault<C>,
+    borrow_vault: &mut Vault<T>,
+    oracle: &PriceOracle,
+    clock: &Clock,
+    ctx: &mut TxContext
+): vector<LiquidationResult> {
+    assert!(vector::length(&positions) == vector::length(&collateral_holders), errors::invalid_parameters());
+    
+    let mut results = vector::empty<LiquidationResult>();
+    let mut i = 0;
+    let len = vector::length(&positions);
+    
+    while (i < len) {
+        let position = vector::borrow_mut(&mut positions, i);
+        let collateral_holder = vector::borrow_mut(&mut collateral_holders, i);
+        
+        // Only liquidate if position is still liquidatable
+        if (is_position_liquidatable<T, C>(pool, position, collateral_vault, oracle, clock)) {
+            let result = liquidate_position<T, C>(
+                pool,
+                position,
+                collateral_holder,
+                collateral_vault,
+                borrow_vault,
+                oracle,
+                clock,
+                ctx
+            );
+            vector::push_back(&mut results, result);
+        };
+        
+        i = i + 1;
+    };
+    
+    // Emit tick update event
+    let timestamp = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    event::emit(LiquidationTickUpdateEvent {
+        pool_id: pool.pool_id,
+        tick_count: 1, // Single tick processed
+        total_liquidatable_positions: vector::length(&results),
+        timestamp,
+    });
+    
+    results
+}
+
+/// Update liquidation configuration for the pool
+/// Only callable by admin
+public fun update_liquidation_config<T>(
+    pool: &mut BorrowingPool<T>,
+    admin_cap: &BorrowingPoolAdminCap,
+    tick_size: option::Option<u64>,
+    liquidation_penalty: option::Option<u64>,
+    liquidation_reward: option::Option<u64>,
+    max_liquidation_ratio: option::Option<u64>,
+) {
+    // Verify admin permission
+    assert!(
+        option::is_some(&pool.admin_cap_id_opt) && 
+        *option::borrow(&pool.admin_cap_id_opt) == object::id(admin_cap), 
+        errors::unauthorized_access()
+    );
+    
+    // Update tick size if provided
+    if (option::is_some(&tick_size)) {
+        let new_tick_size = *option::borrow(&tick_size);
+        assert!(new_tick_size >= 10 && new_tick_size <= 500, errors::invalid_parameters()); // 0.1% to 5%
+        pool.tick_config.tick_size = new_tick_size;
+    };
+    
+    // Update liquidation penalty if provided
+    if (option::is_some(&liquidation_penalty)) {
+        let new_penalty = *option::borrow(&liquidation_penalty);
+        assert!(new_penalty >= 1 && new_penalty <= 100, errors::invalid_parameters()); // 0.01% to 1%
+        pool.tick_config.liquidation_penalty = new_penalty;
+    };
+    
+    // Update liquidation reward if provided
+    if (option::is_some(&liquidation_reward)) {
+        let new_reward = *option::borrow(&liquidation_reward);
+        assert!(new_reward >= 1 && new_reward <= 50, errors::invalid_parameters()); // 0.01% to 0.5%
+        pool.tick_config.liquidation_reward = new_reward;
+    };
+    
+    // Update max liquidation ratio if provided
+    if (option::is_some(&max_liquidation_ratio)) {
+        let new_max_ratio = *option::borrow(&max_liquidation_ratio);
+        assert!(new_max_ratio >= 100 && new_max_ratio <= 5000, errors::invalid_parameters()); // 1% to 50%
+        pool.tick_config.max_liquidation_ratio = new_max_ratio;
+    };
+}
+
+/// Get liquidation statistics for the pool
+public fun get_liquidation_stats<T>(pool: &BorrowingPool<T>): (u64, u64, u64, u64) {
+    (
+        pool.stats.total_liquidations,
+        pool.stats.total_liquidation_penalties,
+        pool.tick_config.liquidation_penalty,
+        pool.tick_config.liquidation_reward
+    )
+}
+
+/// Check if liquidation is enabled for the pool
+public fun is_liquidation_enabled<T>(pool: &BorrowingPool<T>): bool {
+    pool.config.liquidation_enabled
+}
+
+/// Get liquidation configuration for the pool
+public fun get_liquidation_config<T>(pool: &BorrowingPool<T>): (u64, u64, u64, u64) {
+    (
+        pool.tick_config.tick_size,
+        pool.tick_config.liquidation_penalty,
+        pool.tick_config.liquidation_reward,
+        pool.tick_config.max_liquidation_ratio
+    )
+}
+
+#[test_only]
 /// Set position created_at time for testing purposes
 public fun set_position_created_at_for_test(position: &mut BorrowPosition, created_at: u64) {
     position.created_at = created_at;
