@@ -109,8 +109,9 @@
 
 
 
-- [x] 2.1 创建 PriceOracle 核心模块
 
+- [x] 2.1 创建 PriceOracle 核心模块
+                       
   - 创建 `sources/oracle.move` 模块
   - 定义 PriceOracle 结构体作为 Shared Object
   - 定义 PriceInfo 结构体存储价格、置信区间、时间戳等
@@ -198,13 +199,11 @@
   - ✅ 确保所有边界条件和异常情况都有测试
   - ✅ 验证跨模块集成接口的正确性
 
-
   - ✅ 添加积分扣减功能测试
   - _需求: 8.1, 8.2_
 
 - [x] 3.5 准备常量和错误码 ✅ **已完成**
   - ✅ 检查 `sources/constants.move` 和 `sources/errors.move`
-
 
   - ✅ 添加新模块需要的常量定义
   - ✅ 添加新的错误码定义

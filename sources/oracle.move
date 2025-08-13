@@ -105,6 +105,7 @@ const EOracleEmergencyMode: u64 = 2055;
 /// Price validation failed
 const EPriceValidationFailed: u64 = 2056;
 
+
 /// Invalid oracle configuration
 const EInvalidOracleConfig: u64 = 2058;
 
@@ -135,6 +136,7 @@ fun create_oracle_with_admin(ctx: &mut TxContext): (PriceOracle, OracleAdminCap)
         id: object::new(ctx),
         version: constants::current_version(),
         admin_cap_id,
+
         price_feeds: table::new(ctx),
         price_cache: table::new(ctx),
         max_price_delay: 300, // 5 minutes default
@@ -327,6 +329,7 @@ public fun update_oracle_config(
         utils::is_version_compatible(oracle.version, constants::current_version()),
         errors::version_mismatch()
     );
+    
     assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
 
     oracle.config = new_config;
@@ -342,6 +345,7 @@ public fun set_max_price_delay(
         utils::is_version_compatible(oracle.version, constants::current_version()),
         errors::version_mismatch()
     );
+
     assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
 
     oracle.max_price_delay = delay_seconds;
@@ -359,6 +363,7 @@ public fun set_min_confidence(
     );
 
     assert!(confidence <= 100, EInvalidOracleConfig);
+
     assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
     oracle.min_confidence = confidence;
 }
@@ -379,6 +384,7 @@ public fun clear_price_cache<T>(
     admin_cap: &OracleAdminCap,
 ) {
     assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
+
     let asset_type = type_name::get<T>();
     if (table::contains(&oracle.price_cache, asset_type)) {
         table::remove(&mut oracle.price_cache, asset_type);
@@ -416,6 +422,8 @@ fun validate_price_data(
     if (current_time - price_info.timestamp > oracle.max_price_delay) {
         event::emit(PriceValidationErrorEvent {
             asset_type,
+=======
+            asset_type: type_name::get<u64>(), // Placeholder
             error_type: 1, // Stale data
             timestamp: current_time,
             details: b"Price data too old",

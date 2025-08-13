@@ -114,6 +114,7 @@ const EPriceConfidenceTooLow: u64 = 2052;
 /// Price manipulation detected (Oracle module)
 const EOraclePriceManipulationDetected: u64 = 2053;
 
+
 /// Invalid price feed ID
 const EInvalidPriceFeedId: u64 = 2054;
 
@@ -251,13 +252,16 @@ public fun account_restricted(): u64 { EAccountRestricted }
 public fun price_feed_not_found(): u64 { EPriceFeedNotFound }
 public fun price_data_stale(): u64 { EPriceDataStale }
 public fun price_confidence_too_low(): u64 { EPriceConfidenceTooLow }
+
 public fun oracle_price_manipulation_detected(): u64 { EOraclePriceManipulationDetected }
+
 public fun invalid_price_feed_id(): u64 { EInvalidPriceFeedId }
 public fun oracle_emergency_mode(): u64 { EOracleEmergencyMode }
 public fun price_validation_failed(): u64 { EPriceValidationFailed }
 public fun unauthorized_oracle_access(): u64 { EUnauthorizedOracleAccess }
 public fun invalid_oracle_config(): u64 { EInvalidOracleConfig }
 public fun price_cache_miss(): u64 { EPriceCacheMiss }
+
 
 // ===== Borrowing Pool Module Error Codes (4000-4099) =====
 
@@ -348,6 +352,7 @@ public fun invalid_security_config(): u64 { EInvalidSecurityConfig }
 public fun security_not_initialized(): u64 { ESecurityNotInitialized }
 public fun invalid_role(): u64 { EInvalidRole }
 public fun operation_timeout(): u64 { EOperationTimeout }
+
 
 /// Get general error codes
 public fun invalid_input(): u64 { EInvalidInput }

@@ -19,6 +19,8 @@ const ADMIN: address = @0xAD;
 fun test_pyth_adapter_basic() {
     let mut scenario = test::begin(ADMIN);
     let clock = clock::create_for_testing(ctx(&mut scenario));
+=======
+    let mut clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
     next_tx(&mut scenario, ADMIN);
@@ -118,7 +120,7 @@ fun test_multiple_price_feeds() {
         test::return_shared(oracle);
     };
     
-        test::end(scenario);
+    test::end(scenario);
 }
 
 /// Test price feed configuration validation
@@ -150,5 +152,6 @@ fun test_invalid_price_feed_id() {
         test::return_shared(oracle);
     };
     
-        test::end(scenario);
+     test::end(scenario);
 }
+

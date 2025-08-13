@@ -14,7 +14,9 @@ use olend::errors;
 use pyth::state::{State as PythState};
 use pyth::price_info::{PriceInfoObject};
 use pyth::price::{Price as PythPrice};
+
 // Removed unused import: I64
+
 use pyth::pyth;
 
 /// Pyth integration events
@@ -26,11 +28,11 @@ public struct PythPriceUpdateEvent has copy, drop {
     publish_time: u64,
 }
 
-
 // ===== Error Constants =====
 
 /// Pyth price data invalid
 const EPythPriceDataInvalid: u64 = 2061;
+
 
 // ===== Public Functions =====
 
@@ -85,6 +87,7 @@ public fun batch_update_prices_from_pyth(
 /// Type parameter T is needed for future type-specific operations
 public fun get_fresh_price_from_pyth<T>(
     oracle: &PriceOracle,
+
     pyth_state: &PythState,
     price_info_object: &PriceInfoObject,
     clock: &Clock,

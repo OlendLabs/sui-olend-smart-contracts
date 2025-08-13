@@ -91,6 +91,7 @@ fun test_configure_price_feed() {
 #[test]
 fun test_price_cache() {
     let mut scenario = test::begin(ADMIN);
+
     let clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
@@ -138,6 +139,7 @@ fun test_price_cache() {
 #[test]
 fun test_price_validation() {
     let mut scenario = test::begin(ADMIN);
+
     let clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
@@ -200,11 +202,13 @@ fun test_usd_conversion() {
         oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
         
         // Cache BTC price at $50,000 using protocol decimal precision
+
         let price_info = oracle::create_price_info(
             50000_00000000, // $50,000
             98,
             clock::timestamp_ms(&clock) / 1000,
             olend::constants::price_decimal_precision(),
+
             true
         );
         

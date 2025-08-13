@@ -207,6 +207,7 @@ This project strictly follows the [Move Book Code Quality Checklist](https://mov
 sui move build
 
 # Run all tests (188 tests, 100% pass rate)
+
 sui move test
 
 # Run specific test modules
@@ -237,9 +238,11 @@ sui client publish --gas-budget 100000000
   - Core functionality tests
   - Security and permission tests
   - Integration tests
+
   - Points and level system tests
   - Oracle integration tests
   - Borrowing and lending pool tests
+                       
   - Edge case and error handling tests
 
 ## Project Status
