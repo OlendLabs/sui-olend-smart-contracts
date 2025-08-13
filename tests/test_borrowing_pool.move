@@ -1838,3 +1838,255 @@ fun test_partial_liquidation_logic() {
     let test_passed = true;
     assert!(test_passed, 0);
 }
+
+/// Test low liquidation penalty mechanism (Task 6.3)
+#[test]
+fun test_low_liquidation_penalty_mechanism() {
+    let mut scenario = test::begin(ADMIN);
+    
+    // Initialize borrowing pools
+    borrowing_pool::init_for_testing(ctx(&mut scenario));
+    
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut registry = test::take_shared<BorrowingPoolRegistry>(&scenario);
+        let admin_cap = test::take_from_sender<BorrowingPoolAdminCap>(&scenario);
+        let clock = clock::create_for_testing(ctx(&mut scenario));
+        
+        // Create a borrowing pool for USDC
+        let _pool_id = borrowing_pool::create_borrowing_pool<USDC>(
+            &mut registry,
+            &admin_cap,
+            b"USDC Pool",
+            b"USDC borrowing pool with low penalty",
+            0, // dynamic interest model
+            500, // 5% base rate
+            1000, // 10% rate slope
+            200, // 2% risk premium
+            0, // fixed rate (not used)
+            8000, // 80% initial LTV
+            9000, // 90% warning LTV
+            9500, // 95% liquidation LTV
+            1000000, // max borrow limit
+            &clock,
+            ctx(&mut scenario)
+        );
+        
+        // Don't destroy admin_cap, transfer it back to sender for next transaction
+        transfer::public_transfer(admin_cap, ADMIN);
+        test_utils::destroy(registry);
+        clock::destroy_for_testing(clock);
+    };
+    
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut pool = test::take_shared<BorrowingPool<USDC>>(&scenario);
+        let admin_cap = test::take_from_sender<BorrowingPoolAdminCap>(&scenario);
+        let clock = clock::create_for_testing(ctx(&mut scenario));
+        
+        // Test 1: Get initial low penalty configuration
+        let (base_penalty, min_penalty, max_penalty, market_adj, vol_adj, liq_adj) = 
+            borrowing_pool::get_low_penalty_config(&pool);
+        
+        // Verify default configuration (0.1% base penalty)
+        assert!(base_penalty == 10, 0); // 0.1% in basis points
+        assert!(min_penalty == 10, 1);  // 0.1% minimum
+        assert!(max_penalty == 500, 2); // 5% maximum
+        assert!(market_adj == true, 3);  // Market adjustment enabled
+        
+        // Test 2: Update low penalty configuration
+        borrowing_pool::update_low_penalty_config<USDC>(
+            &mut pool,
+            &admin_cap,
+            option::some(15), // 0.15% base penalty
+            option::some(5),  // 0.05% min penalty
+            option::some(300), // 3% max penalty
+            option::some(false), // Disable market adjustment
+            option::some(true),  // Enable volatility adjustment
+            option::some(false), // Disable liquidity adjustment
+        );
+        
+        // Verify updated configuration
+        let (new_base, new_min, new_max, new_market_adj, new_vol_adj, new_liq_adj) = 
+            borrowing_pool::get_low_penalty_config(&pool);
+        assert!(new_base == 15, 4);
+        assert!(new_min == 5, 5);
+        assert!(new_max == 300, 6);
+        assert!(new_market_adj == false, 7);
+        assert!(new_vol_adj == true, 8);
+        assert!(new_liq_adj == false, 9);
+        
+        // Test 3: Get penalty distribution configuration
+        let (liquidator_rate, platform_rate, insurance_rate, borrower_protection) = 
+            borrowing_pool::get_penalty_distribution_config(&pool);
+        
+        // Verify default distribution (50% liquidator, 30% platform, 20% insurance)
+        assert!(liquidator_rate == 5000, 10); // 50%
+        assert!(platform_rate == 3000, 11);   // 30%
+        assert!(insurance_rate == 2000, 12);  // 20%
+        assert!(borrower_protection == true, 13); // Default is true
+        
+        // Test 4: Update penalty distribution configuration
+        borrowing_pool::update_penalty_distribution_config<USDC>(
+            &mut pool,
+            &admin_cap,
+            option::some(4000), // 40% to liquidator
+            option::some(3500), // 35% to platform
+            option::some(2500), // 25% to insurance
+            option::some(true),  // Enable borrower protection
+        );
+        
+        // Verify updated distribution
+        let (new_liq_rate, new_plat_rate, new_ins_rate, new_borrower_prot) = 
+            borrowing_pool::get_penalty_distribution_config(&pool);
+        assert!(new_liq_rate == 4000, 14);
+        assert!(new_plat_rate == 3500, 15);
+        assert!(new_ins_rate == 2500, 16);
+        assert!(new_borrower_prot == true, 17);
+        
+        // Test 5: Update market condition factors
+        borrowing_pool::update_market_condition_factors<USDC>(
+            &mut pool,
+            &admin_cap,
+            75, // High volatility
+            30, // Low liquidity
+            60, // Medium price stability
+            &clock,
+        );
+        
+        // Verify market condition factors
+        let (volatility, liquidity, stability, _last_updated) = 
+            borrowing_pool::get_market_condition_factors(&pool);
+        assert!(volatility == 75, 18);
+        assert!(liquidity == 30, 19);
+        assert!(stability == 60, 20);
+        // Note: last_updated timestamp is set by the clock in update function
+        
+        // Test 6: Test dynamic penalty calculation
+        let asset_type = std::type_name::get<USDC>();
+        let dynamic_penalty = borrowing_pool::calculate_dynamic_liquidation_penalty<USDC, USDC>(
+            &pool,
+            asset_type,
+            75, // High volatility
+            30, // Low liquidity
+            1000000, // Liquidation amount
+        );
+        
+        // With high volatility and low liquidity, penalty should be higher than base
+        assert!(dynamic_penalty >= 15, 22); // Should be at least base penalty
+        
+        // Test 7: Test penalty distribution calculation
+        let total_penalty = 1000; // 1000 units penalty
+        let (liq_reward, plat_reserve, ins_fund, borrower_prot) = 
+            borrowing_pool::calculate_penalty_distribution<USDC>(&pool, total_penalty);
+        
+        // Verify distribution matches configuration (40%, 35%, 25%)
+        assert!(liq_reward == 400, 23);  // 40% of 1000
+        assert!(plat_reserve == 350, 24); // 35% of 1000
+        assert!(ins_fund == 250, 25);    // 25% of 1000
+        // Borrower protection should be 0 since total is 100%
+        assert!(borrower_prot == 0, 26);
+        
+        test_utils::destroy(admin_cap);
+        test_utils::destroy(pool);
+        clock::destroy_for_testing(clock);
+    };
+    
+    test::end(scenario);
+}
+
+/// Test asset-specific penalty multipliers (Task 6.3)
+#[test]
+fun test_asset_penalty_multipliers() {
+    let mut scenario = test::begin(ADMIN);
+    
+    // Initialize borrowing pools
+    borrowing_pool::init_for_testing(ctx(&mut scenario));
+    
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut registry = test::take_shared<BorrowingPoolRegistry>(&scenario);
+        let admin_cap = test::take_from_sender<BorrowingPoolAdminCap>(&scenario);
+        let clock = clock::create_for_testing(ctx(&mut scenario));
+        
+        // Create a borrowing pool
+        let _pool_id = borrowing_pool::create_borrowing_pool<USDC>(
+            &mut registry,
+            &admin_cap,
+            b"USDC Pool",
+            b"USDC borrowing pool",
+            0, 500, 1000, 200, 0, 8000, 9000, 9500, 1000000,
+            &clock,
+            ctx(&mut scenario)
+        );
+        
+        // Don't destroy admin_cap, transfer it back to sender for next transaction
+        transfer::public_transfer(admin_cap, ADMIN);
+        test_utils::destroy(registry);
+        clock::destroy_for_testing(clock);
+    };
+    
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut pool = test::take_shared<BorrowingPool<USDC>>(&scenario);
+        let admin_cap = test::take_from_sender<BorrowingPoolAdminCap>(&scenario);
+        
+        // Test 1: Set asset-specific penalty multiplier for BTC (lower penalty)
+        let btc_type = std::type_name::get<BTC>();
+        borrowing_pool::set_asset_penalty_multiplier<USDC>(
+            &mut pool,
+            &admin_cap,
+            btc_type,
+            8000, // 80% multiplier (lower penalty for BTC)
+        );
+        
+        // Test 2: Set asset-specific penalty multiplier for USDC (higher penalty)
+        let usdc_type = std::type_name::get<USDC>();
+        borrowing_pool::set_asset_penalty_multiplier<USDC>(
+            &mut pool,
+            &admin_cap,
+            usdc_type,
+            12000, // 120% multiplier (higher penalty for USDC)
+        );
+        
+        // Test 3: Calculate penalty with BTC multiplier
+        let btc_penalty = borrowing_pool::calculate_dynamic_liquidation_penalty<USDC, BTC>(
+            &pool,
+            btc_type,
+            50, // Medium volatility
+            50, // Medium liquidity
+            1000000,
+        );
+        
+        // Test 4: Calculate penalty with USDC multiplier
+        let usdc_penalty = borrowing_pool::calculate_dynamic_liquidation_penalty<USDC, USDC>(
+            &pool,
+            usdc_type,
+            50, // Medium volatility
+            50, // Medium liquidity
+            1000000,
+        );
+        
+        // BTC should have lower penalty than USDC due to multiplier
+        assert!(btc_penalty < usdc_penalty, 0);
+        
+        // Test 5: Calculate penalty for asset without specific multiplier
+        let unknown_type = std::type_name::get<u64>(); // Use u64 as unknown asset type
+        let default_penalty = borrowing_pool::calculate_dynamic_liquidation_penalty<USDC, u64>(
+            &pool,
+            unknown_type,
+            50, // Medium volatility
+            50, // Medium liquidity
+            1000000,
+        );
+        
+        // Should use base penalty rate without multiplier adjustment
+        let (base_penalty, _, _, _, _, _) = borrowing_pool::get_low_penalty_config(&pool);
+        assert!(default_penalty == base_penalty, 1);
+        
+        test_utils::destroy(admin_cap);
+        test_utils::destroy(pool);
+    };
+    
+    test::end(scenario);
+}

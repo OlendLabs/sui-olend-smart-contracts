@@ -220,6 +220,7 @@ public fun daily_limit_exceeded(): u64 { EDailyLimitExceeded }
 public fun invalid_shares(): u64 { EInvalidShares }
 public fun version_mismatch(): u64 { EVersionMismatch }
 public fun unauthorized_access(): u64 { EUnauthorizedAccess }
+public fun unauthorized(): u64 { EUnauthorizedAccess }
 public fun vault_not_active(): u64 { EVaultNotActive }
 public fun invalid_assets(): u64 { EInvalidAssets }
 public fun invalid_vault_config(): u64 { EInvalidVaultConfig }

@@ -421,8 +421,6 @@ fun validate_price_data(
     // Check if price data is not too old
     if (current_time - price_info.timestamp > oracle.max_price_delay) {
         event::emit(PriceValidationErrorEvent {
-            asset_type,
-=======
             asset_type: type_name::get<u64>(), // Placeholder
             error_type: 1, // Stale data
             timestamp: current_time,

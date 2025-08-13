@@ -70,6 +70,12 @@ public struct BorrowingPool<phantom T> has key {
     active_positions: u64,
     /// Tick liquidation configuration
     tick_config: TickLiquidationConfig,
+    /// Low liquidation penalty configuration (Task 6.3)
+    low_penalty_config: LowLiquidationPenaltyConfig,
+    /// Penalty distribution configuration (Task 6.3)
+    penalty_distribution_config: PenaltyDistributionConfig,
+    /// Market condition factors for dynamic penalty (Task 6.3)
+    market_condition_factors: MarketConditionFactors,
     /// High collateral ratio configuration
     high_collateral_config: HighCollateralConfig,
     /// Risk monitoring configuration
@@ -96,6 +102,48 @@ public struct TickLiquidationConfig has store, copy, drop {
     liquidation_reward: u64,
     /// Maximum liquidation ratio per operation (in basis points)
     max_liquidation_ratio: u64,
+}
+
+/// Low liquidation penalty configuration for Task 6.3
+public struct LowLiquidationPenaltyConfig has store {
+    /// Base penalty rate (in basis points, e.g., 10 = 0.1%)
+    base_penalty_rate: u64,
+    /// Minimum penalty rate (in basis points, e.g., 10 = 0.1%)
+    min_penalty_rate: u64,
+    /// Maximum penalty rate (in basis points, e.g., 500 = 5%)
+    max_penalty_rate: u64,
+    /// Asset-specific penalty multipliers (stored as basis points)
+    asset_penalty_multipliers: Table<TypeName, u64>,
+    /// Market condition adjustment enabled
+    market_condition_adjustment: bool,
+    /// Volatility-based penalty adjustment enabled
+    volatility_adjustment: bool,
+    /// Liquidity-based penalty adjustment enabled
+    liquidity_adjustment: bool,
+}
+
+/// Penalty distribution configuration for Task 6.3
+public struct PenaltyDistributionConfig has store, copy, drop {
+    /// Liquidator reward percentage (in basis points, e.g., 5000 = 50%)
+    liquidator_reward_rate: u64,
+    /// Platform reserve percentage (in basis points, e.g., 3000 = 30%)
+    platform_reserve_rate: u64,
+    /// Insurance fund percentage (in basis points, e.g., 2000 = 20%)
+    insurance_fund_rate: u64,
+    /// Remaining goes back to borrower protection
+    borrower_protection_enabled: bool,
+}
+
+/// Market condition factors for dynamic penalty calculation
+public struct MarketConditionFactors has store, copy, drop {
+    /// Current market volatility level (0-100)
+    volatility_level: u8,
+    /// Current liquidity depth factor (0-100)
+    liquidity_factor: u8,
+    /// Price stability factor (0-100)
+    price_stability: u8,
+    /// Last update timestamp
+    last_updated: u64,
 }
 
 /// High collateral ratio configuration for different asset types
@@ -282,6 +330,46 @@ public struct RiskMonitoringAlertEvent has copy, drop {
     timestamp: u64,
 }
 
+/// Low liquidation penalty event (Task 6.3)
+public struct LowLiquidationPenaltyEvent has copy, drop {
+    pool_id: u64,
+    position_id: ID,
+    liquidator: address,
+    borrower: address,
+    collateral_liquidated: u64,
+    penalty_amount: u64,
+    penalty_rate: u64, // in basis points
+    liquidator_reward: u64,
+    platform_reserve: u64,
+    insurance_fund: u64,
+    borrower_protection: u64,
+    timestamp: u64,
+}
+
+/// Dynamic penalty adjustment event (Task 6.3)
+public struct DynamicPenaltyAdjustmentEvent has copy, drop {
+    pool_id: u64,
+    asset_type: TypeName,
+    base_penalty: u64,
+    adjusted_penalty: u64,
+    volatility_factor: u8,
+    liquidity_factor: u8,
+    price_stability: u8,
+    timestamp: u64,
+}
+
+/// Penalty distribution event (Task 6.3)
+public struct PenaltyDistributionEvent has copy, drop {
+    pool_id: u64,
+    position_id: ID,
+    total_penalty: u64,
+    liquidator_share: u64,
+    platform_share: u64,
+    insurance_share: u64,
+    borrower_protection_share: u64,
+    timestamp: u64,
+}
+
 // ===== Error Constants =====
 
 /// Pool is paused
@@ -370,6 +458,8 @@ const ELiquidationNotAllowed: u64 = 4017;
 const EInvalidCollateralHolder: u64 = 4018;
 const ENoLiquidationNeeded: u64 = 4019;
 const EInvalidParameters: u64 = 4020;
+const EInvalidPenaltyRate: u64 = 4021;
+const EInsufficientLiquidity: u64 = 4022;
 
 // ===== Helper Functions =====
 
@@ -510,6 +600,33 @@ public fun create_borrowing_pool<T>(
         max_liquidation_ratio: 1000, // 10% max liquidation per operation
     };
     
+    // Create low liquidation penalty configuration (Task 6.3)
+    let low_penalty_config = LowLiquidationPenaltyConfig {
+        base_penalty_rate: 10, // 0.1% base penalty
+        min_penalty_rate: 10, // 0.1% minimum
+        max_penalty_rate: 500, // 5% maximum
+        asset_penalty_multipliers: table::new(ctx),
+        market_condition_adjustment: true,
+        volatility_adjustment: true,
+        liquidity_adjustment: true,
+    };
+    
+    // Create penalty distribution configuration (Task 6.3)
+    let penalty_distribution_config = PenaltyDistributionConfig {
+        liquidator_reward_rate: 5000, // 50% to liquidator
+        platform_reserve_rate: 3000, // 30% to platform
+        insurance_fund_rate: 2000, // 20% to insurance
+        borrower_protection_enabled: true, // Remaining protects borrower
+    };
+    
+    // Create market condition factors (Task 6.3)
+    let market_condition_factors = MarketConditionFactors {
+        volatility_level: 50, // Medium volatility
+        liquidity_factor: 80, // Good liquidity
+        price_stability: 70, // Stable prices
+        last_updated: current_time,
+    };
+    
     // Create high collateral configuration
     let high_collateral_config = HighCollateralConfig {
         btc_max_ltv: 9700, // 97% for BTC
@@ -566,6 +683,9 @@ public fun create_borrowing_pool<T>(
         total_borrowed: 0,
         active_positions: 0,
         tick_config,
+        low_penalty_config,
+        penalty_distribution_config,
+        market_condition_factors,
         high_collateral_config,
         risk_monitoring_config,
         max_borrow_limit,
@@ -2297,6 +2417,33 @@ public fun create_pool_for_test<T>(
         risk_alert_enabled: true,
     };
 
+    // Create low penalty configuration for testing
+    let low_penalty_config = LowLiquidationPenaltyConfig {
+        base_penalty_rate: 10, // 0.1% base penalty
+        min_penalty_rate: 10, // 0.1% minimum
+        max_penalty_rate: 500, // 5% maximum
+        asset_penalty_multipliers: table::new(ctx),
+        market_condition_adjustment: true,
+        volatility_adjustment: true,
+        liquidity_adjustment: true,
+    };
+    
+    // Create penalty distribution configuration
+    let penalty_distribution_config = PenaltyDistributionConfig {
+        liquidator_reward_rate: 5000, // 50% to liquidator
+        platform_reserve_rate: 3000, // 30% to platform
+        insurance_fund_rate: 2000, // 20% to insurance
+        borrower_protection_enabled: true,
+    };
+    
+    // Create market condition factors
+    let market_condition_factors = MarketConditionFactors {
+        volatility_level: 50, // Medium volatility
+        liquidity_factor: 80, // Good liquidity
+        price_stability: 70, // Stable prices
+        last_updated: 0,
+    };
+
     BorrowingPool<T> {
         id: object::new(ctx),
         version: constants::current_version(),
@@ -2314,6 +2461,9 @@ public fun create_pool_for_test<T>(
         total_borrowed: 0,
         active_positions: 0,
         tick_config,
+        low_penalty_config,
+        penalty_distribution_config,
+        market_condition_factors,
         high_collateral_config,
         risk_monitoring_config,
         max_borrow_limit: 1_000_000_000,
@@ -2440,6 +2590,33 @@ public fun create_pool_with_admin_for_test<T>(
         current_apr: base_rate,
     };
     
+    // Create low penalty configuration for testing
+    let low_penalty_config = LowLiquidationPenaltyConfig {
+        base_penalty_rate: 10, // 0.1% base penalty
+        min_penalty_rate: 10, // 0.1% minimum
+        max_penalty_rate: 500, // 5% maximum
+        asset_penalty_multipliers: table::new(ctx),
+        market_condition_adjustment: true,
+        volatility_adjustment: true,
+        liquidity_adjustment: true,
+    };
+    
+    // Create penalty distribution configuration
+    let penalty_distribution_config = PenaltyDistributionConfig {
+        liquidator_reward_rate: 5000, // 50% to liquidator
+        platform_reserve_rate: 3000, // 30% to platform
+        insurance_fund_rate: 2000, // 20% to insurance
+        borrower_protection_enabled: true,
+    };
+    
+    // Create market condition factors
+    let market_condition_factors = MarketConditionFactors {
+        volatility_level: 50, // Medium volatility
+        liquidity_factor: 80, // Good liquidity
+        price_stability: 70, // Stable prices
+        last_updated: 0,
+    };
+
     BorrowingPool<T> {
         id: object::new(ctx),
         version: constants::current_version(),
@@ -2457,6 +2634,9 @@ public fun create_pool_with_admin_for_test<T>(
         total_borrowed: 0,
         active_positions: 0,
         tick_config,
+        low_penalty_config,
+        penalty_distribution_config,
+        market_condition_factors,
         high_collateral_config,
         risk_monitoring_config,
         max_borrow_limit: 1_000_000_000,
@@ -3029,8 +3209,20 @@ public fun liquidate_position<T, C>(
     // Calculate liquidated collateral value in USD
     let liquidated_value_usd = safe_math::safe_mul_div(liquidated_asset_amount, collateral_asset_price, price_scale);
     
-    // Calculate liquidation penalty and reward
-    let penalty_value_usd = safe_math::safe_mul_div(liquidated_value_usd, pool.tick_config.liquidation_penalty, BASIS_POINTS);
+    // Calculate dynamic liquidation penalty using low penalty mechanism (Task 6.3)
+    let collateral_asset_type = type_name::get<C>();
+    let market_volatility = pool.market_condition_factors.volatility_level;
+    let liquidity_depth = pool.market_condition_factors.liquidity_factor;
+    let dynamic_penalty_rate = calculate_dynamic_liquidation_penalty<T, C>(
+        pool,
+        collateral_asset_type,
+        market_volatility,
+        liquidity_depth,
+        actual_liquidation_amount
+    );
+    
+    // Calculate penalty and reward using dynamic rate
+    let penalty_value_usd = safe_math::safe_mul_div(liquidated_value_usd, dynamic_penalty_rate, BASIS_POINTS);
     let reward_value_usd = safe_math::safe_mul_div(liquidated_value_usd, pool.tick_config.liquidation_reward, BASIS_POINTS);
     
     // Calculate debt to repay (liquidated value - penalty)
@@ -3047,8 +3239,12 @@ public fun liquidate_position<T, C>(
     
     // Calculate actual penalty and reward based on actual debt repaid
     let actual_penalty_value = safe_math::safe_mul_div(actual_debt_repay, borrow_asset_price, price_scale);
-    let actual_penalty_amount = safe_math::safe_mul_div(actual_penalty_value, pool.tick_config.liquidation_penalty, BASIS_POINTS);
+    let actual_penalty_amount = safe_math::safe_mul_div(actual_penalty_value, dynamic_penalty_rate, BASIS_POINTS);
     let actual_reward_amount = safe_math::safe_mul_div(actual_penalty_value, pool.tick_config.liquidation_reward, BASIS_POINTS);
+    
+    // Calculate penalty distribution using low penalty mechanism (Task 6.3)
+    let (liquidator_reward, platform_reserve, insurance_fund, borrower_protection) = 
+        calculate_penalty_distribution<T>(pool, actual_penalty_amount);
     
     // Split liquidated assets for debt repayment, penalty, and reward
     let debt_repay_coin = coin::split(&mut liquidated_assets, actual_debt_repay, ctx);
@@ -3145,6 +3341,34 @@ public fun liquidate_position<T, C>(
         penalty_collected: actual_penalty_amount,
         reward_paid: reward_amount,
         timestamp,
+    });
+    
+    // Emit low liquidation penalty event (Task 6.3)
+    event::emit(LowLiquidationPenaltyEvent {
+        pool_id: pool.pool_id,
+        position_id: position.position_id,
+        liquidator,
+        borrower: @0x0, // TODO: Need to store borrower address in position
+        collateral_liquidated: actual_liquidation_amount,
+        penalty_amount: actual_penalty_amount,
+        penalty_rate: dynamic_penalty_rate,
+        liquidator_reward,
+        platform_reserve,
+        insurance_fund,
+        borrower_protection,
+        timestamp: clock::timestamp_ms(clock),
+    });
+    
+    // Emit penalty distribution event (Task 6.3)
+    event::emit(PenaltyDistributionEvent {
+        pool_id: pool.pool_id,
+        position_id: position.position_id,
+        total_penalty: actual_penalty_amount,
+        liquidator_share: liquidator_reward,
+        platform_share: platform_reserve,
+        insurance_share: insurance_fund,
+        borrower_protection_share: borrower_protection,
+        timestamp: clock::timestamp_ms(clock),
     });
     
     // Calculate liquidation effectiveness metrics
@@ -3809,6 +4033,391 @@ public fun create_collateral_holder_for_testing<C>(
         collateral,
     }
 }
+
+    // ===== Helper Functions =====
+
+    /// Get asset prices from oracle
+    fun get_asset_prices<T, C>(oracle: &PriceOracle, clock: &Clock): (u64, u64, u64) {
+        let borrow_asset_price_info = oracle::get_price<T>(oracle, clock);
+        let collateral_asset_price_info = oracle::get_price<C>(oracle, clock);
+        
+        let borrow_asset_price = oracle::price_info_price(&borrow_asset_price_info);
+        let collateral_asset_price = oracle::price_info_price(&collateral_asset_price_info);
+        let price_scale = pow10(constants::price_decimal_precision());
+        
+        (collateral_asset_price, borrow_asset_price, price_scale)
+    }
+
+    // ===== Low Liquidation Penalty Functions (Task 6.3) =====
+
+    /// Calculate dynamic liquidation penalty based on asset type and market conditions
+    public fun calculate_dynamic_liquidation_penalty<T, C>(
+        pool: &BorrowingPool<T>,
+        collateral_asset_type: TypeName,
+        market_volatility: u8,
+        liquidity_depth: u8,
+        liquidation_amount: u64,
+    ): u64 {
+        let base_penalty = pool.low_penalty_config.base_penalty_rate;
+        
+        // Apply asset-specific multiplier
+        let asset_multiplier = if (table::contains(&pool.low_penalty_config.asset_penalty_multipliers, collateral_asset_type)) {
+            *table::borrow(&pool.low_penalty_config.asset_penalty_multipliers, collateral_asset_type)
+        } else {
+            BASIS_POINTS // 100% multiplier (no change)
+        };
+        
+        let penalty_with_asset = safe_math::safe_mul_div(base_penalty, asset_multiplier, BASIS_POINTS);
+        
+        // Apply market condition adjustments if enabled
+        let final_penalty = if (pool.low_penalty_config.market_condition_adjustment) {
+            apply_market_condition_adjustment(penalty_with_asset, market_volatility, liquidity_depth)
+        } else {
+            penalty_with_asset
+        };
+        
+        // Ensure penalty is within bounds
+        let min_penalty = pool.low_penalty_config.min_penalty_rate;
+        let max_penalty = pool.low_penalty_config.max_penalty_rate;
+        
+        if (final_penalty < min_penalty) {
+            min_penalty
+        } else if (final_penalty > max_penalty) {
+            max_penalty
+        } else {
+            final_penalty
+        }
+    }
+
+    /// Apply market condition adjustments to penalty rate
+    fun apply_market_condition_adjustment(
+        base_penalty: u64,
+        market_volatility: u8,
+        liquidity_depth: u8,
+    ): u64 {
+        let volatility_adjustment = if (market_volatility > 80) {
+            150 // 50% increase for high volatility
+        } else if (market_volatility > 50) {
+            125 // 25% increase for medium volatility
+        } else {
+            100 // No adjustment for low volatility
+        };
+        
+        let liquidity_adjustment = if (liquidity_depth < 20) {
+            150 // 50% increase for low liquidity
+        } else if (liquidity_depth < 50) {
+            125 // 25% increase for medium liquidity
+        } else {
+            100 // No adjustment for high liquidity
+        };
+        
+        // Apply both adjustments
+        let adjusted_penalty = safe_math::safe_mul_div(base_penalty, volatility_adjustment, 100);
+        safe_math::safe_mul_div(adjusted_penalty, liquidity_adjustment, 100)
+    }
+
+    /// Calculate penalty distribution among liquidator, platform, and insurance fund
+    public fun calculate_penalty_distribution<T>(
+        pool: &BorrowingPool<T>,
+        total_penalty_amount: u64,
+    ): (u64, u64, u64, u64) {
+        let liquidator_reward = safe_math::safe_mul_div(
+            total_penalty_amount,
+            pool.penalty_distribution_config.liquidator_reward_rate,
+            BASIS_POINTS
+        );
+        
+        let platform_reserve = safe_math::safe_mul_div(
+            total_penalty_amount,
+            pool.penalty_distribution_config.platform_reserve_rate,
+            BASIS_POINTS
+        );
+        
+        let insurance_fund = safe_math::safe_mul_div(
+            total_penalty_amount,
+            pool.penalty_distribution_config.insurance_fund_rate,
+            BASIS_POINTS
+        );
+        
+        // Remaining goes to borrower protection if enabled
+        let borrower_protection = if (pool.penalty_distribution_config.borrower_protection_enabled) {
+            safe_math::safe_sub(
+                total_penalty_amount,
+                safe_math::safe_add(
+                    safe_math::safe_add(liquidator_reward, platform_reserve),
+                    insurance_fund
+                )
+            )
+        } else {
+            0
+        };
+        
+        (liquidator_reward, platform_reserve, insurance_fund, borrower_protection)
+    }
+
+    /// Update market condition factors for dynamic penalty calculation
+    public fun update_market_condition_factors<T>(
+        pool: &mut BorrowingPool<T>,
+        admin_cap: &BorrowingPoolAdminCap,
+        volatility_level: u8,
+        liquidity_factor: u8,
+        price_stability: u8,
+        clock: &Clock,
+    ) {
+        assert!(pool.version == constants::current_version(), errors::version_mismatch());
+        assert!(pool.admin_cap_id_opt == option::some(object::id(admin_cap)), errors::unauthorized());
+        
+        // Validate input ranges (0-100)
+        assert!(volatility_level <= 100, errors::invalid_parameters());
+        assert!(liquidity_factor <= 100, errors::invalid_parameters());
+        assert!(price_stability <= 100, errors::invalid_parameters());
+        
+        pool.market_condition_factors.volatility_level = volatility_level;
+        pool.market_condition_factors.liquidity_factor = liquidity_factor;
+        pool.market_condition_factors.price_stability = price_stability;
+        pool.market_condition_factors.last_updated = clock::timestamp_ms(clock);
+    }
+
+    /// Set asset-specific penalty multiplier
+    public fun set_asset_penalty_multiplier<T>(
+        pool: &mut BorrowingPool<T>,
+        admin_cap: &BorrowingPoolAdminCap,
+        asset_type: TypeName,
+        multiplier: u64,
+    ) {
+        assert!(pool.version == constants::current_version(), errors::version_mismatch());
+        assert!(pool.admin_cap_id_opt == option::some(object::id(admin_cap)), errors::unauthorized());
+        
+        // Multiplier should be between 50% and 200% (5000-20000 basis points)
+        assert!(multiplier >= 5000 && multiplier <= 20000, errors::invalid_parameters());
+        
+        if (table::contains(&pool.low_penalty_config.asset_penalty_multipliers, asset_type)) {
+            *table::borrow_mut(&mut pool.low_penalty_config.asset_penalty_multipliers, asset_type) = multiplier;
+        } else {
+            table::add(&mut pool.low_penalty_config.asset_penalty_multipliers, asset_type, multiplier);
+        };
+    }
+
+    /// Update low penalty configuration
+    public fun update_low_penalty_config<T>(
+        pool: &mut BorrowingPool<T>,
+        admin_cap: &BorrowingPoolAdminCap,
+        base_penalty_rate: option::Option<u64>,
+        min_penalty_rate: option::Option<u64>,
+        max_penalty_rate: option::Option<u64>,
+        market_condition_adjustment: option::Option<bool>,
+        volatility_adjustment: option::Option<bool>,
+        liquidity_adjustment: option::Option<bool>,
+    ) {
+        assert!(pool.version == constants::current_version(), errors::version_mismatch());
+        assert!(pool.admin_cap_id_opt == option::some(object::id(admin_cap)), errors::unauthorized());
+        
+        // Update base penalty rate if provided
+        if (option::is_some(&base_penalty_rate)) {
+            let new_rate = *option::borrow(&base_penalty_rate);
+            assert!(new_rate >= 1 && new_rate <= 500, errors::invalid_parameters()); // 0.01% to 5%
+            pool.low_penalty_config.base_penalty_rate = new_rate;
+        };
+        
+        // Update min penalty rate if provided
+        if (option::is_some(&min_penalty_rate)) {
+            let new_rate = *option::borrow(&min_penalty_rate);
+            assert!(new_rate >= 1 && new_rate <= 100, errors::invalid_parameters()); // 0.01% to 1%
+            pool.low_penalty_config.min_penalty_rate = new_rate;
+        };
+        
+        // Update max penalty rate if provided
+        if (option::is_some(&max_penalty_rate)) {
+            let new_rate = *option::borrow(&max_penalty_rate);
+            assert!(new_rate >= 100 && new_rate <= 1000, errors::invalid_parameters()); // 1% to 10%
+            pool.low_penalty_config.max_penalty_rate = new_rate;
+        };
+        
+        // Update adjustment flags if provided
+        if (option::is_some(&market_condition_adjustment)) {
+            pool.low_penalty_config.market_condition_adjustment = *option::borrow(&market_condition_adjustment);
+        };
+        
+        if (option::is_some(&volatility_adjustment)) {
+            pool.low_penalty_config.volatility_adjustment = *option::borrow(&volatility_adjustment);
+        };
+        
+        if (option::is_some(&liquidity_adjustment)) {
+            pool.low_penalty_config.liquidity_adjustment = *option::borrow(&liquidity_adjustment);
+        };
+    }
+
+    /// Update penalty distribution configuration
+    public fun update_penalty_distribution_config<T>(
+        pool: &mut BorrowingPool<T>,
+        admin_cap: &BorrowingPoolAdminCap,
+        liquidator_reward_rate: option::Option<u64>,
+        platform_reserve_rate: option::Option<u64>,
+        insurance_fund_rate: option::Option<u64>,
+        borrower_protection_enabled: option::Option<bool>,
+    ) {
+        assert!(pool.version == constants::current_version(), errors::version_mismatch());
+        assert!(pool.admin_cap_id_opt == option::some(object::id(admin_cap)), errors::unauthorized());
+        
+        // Update liquidator reward rate if provided
+        if (option::is_some(&liquidator_reward_rate)) {
+            let new_rate = *option::borrow(&liquidator_reward_rate);
+            assert!(new_rate >= 1000 && new_rate <= 8000, errors::invalid_parameters()); // 10% to 80%
+            pool.penalty_distribution_config.liquidator_reward_rate = new_rate;
+        };
+        
+        // Update platform reserve rate if provided
+        if (option::is_some(&platform_reserve_rate)) {
+            let new_rate = *option::borrow(&platform_reserve_rate);
+            assert!(new_rate >= 1000 && new_rate <= 5000, errors::invalid_parameters()); // 10% to 50%
+            pool.penalty_distribution_config.platform_reserve_rate = new_rate;
+        };
+        
+        // Update insurance fund rate if provided
+        if (option::is_some(&insurance_fund_rate)) {
+            let new_rate = *option::borrow(&insurance_fund_rate);
+            assert!(new_rate >= 1000 && new_rate <= 4000, errors::invalid_parameters()); // 10% to 40%
+            pool.penalty_distribution_config.insurance_fund_rate = new_rate;
+        };
+        
+        // Update borrower protection flag if provided
+        if (option::is_some(&borrower_protection_enabled)) {
+            pool.penalty_distribution_config.borrower_protection_enabled = *option::borrow(&borrower_protection_enabled);
+        };
+        
+        // Validate that total distribution doesn't exceed 100%
+        let total_rate = safe_math::safe_add(
+            safe_math::safe_add(
+                pool.penalty_distribution_config.liquidator_reward_rate,
+                pool.penalty_distribution_config.platform_reserve_rate
+            ),
+            pool.penalty_distribution_config.insurance_fund_rate
+        );
+        assert!(total_rate <= BASIS_POINTS, errors::invalid_parameters());
+    }
+
+    /// Execute liquidation with low penalty mechanism
+    public fun liquidate_position_with_low_penalty<T, C>(
+        pool: &mut BorrowingPool<T>,
+        position: &mut BorrowPosition,
+        collateral_holder: &mut CollateralHolder<C>,
+        collateral_vault: &mut Vault<C>,
+        borrow_vault: &mut Vault<T>,
+        oracle: &PriceOracle,
+        liquidation_amount: u64,
+        market_volatility: u8,
+        liquidity_depth: u8,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ): (Coin<C>, u64, u64, u64, u64) {
+        assert!(pool.version == constants::current_version(), errors::version_mismatch());
+        assert!(pool.config.liquidation_enabled, errors::operation_denied());
+        
+        // Get asset type for penalty calculation
+        let collateral_asset_type = type_name::get<C>();
+        
+        // Calculate dynamic penalty rate
+        let penalty_rate = calculate_dynamic_liquidation_penalty<T, C>(
+            pool,
+            collateral_asset_type,
+            market_volatility,
+            liquidity_depth,
+            liquidation_amount
+        );
+        
+        // Get asset prices
+        let (collateral_asset_price, borrow_asset_price, price_scale) = get_asset_prices<T, C>(oracle, clock);
+        
+        // Calculate liquidation values
+        let liquidated_assets = validate_vault_exchange_rate(collateral_vault, liquidation_amount);
+        let liquidated_value_usd = safe_math::safe_mul_div(liquidated_assets, collateral_asset_price, price_scale);
+        let penalty_value = safe_math::safe_mul_div(liquidated_value_usd, penalty_rate, BASIS_POINTS);
+        let debt_repay_value = safe_math::safe_sub(liquidated_value_usd, penalty_value);
+        let debt_repay_amount = safe_math::safe_mul_div(debt_repay_value, price_scale, borrow_asset_price);
+        
+        // Withdraw collateral from holder and convert to underlying asset
+        let withdraw_balance = balance::split(&mut collateral_holder.collateral, liquidation_amount);
+        let liquidated_ytoken = coin::from_balance(withdraw_balance, ctx);
+        let liquidated_assets = vault::withdraw(collateral_vault, liquidated_ytoken, ctx);
+        
+        // Calculate penalty distribution
+        let penalty_amount_in_collateral = safe_math::safe_mul_div(penalty_value, price_scale, collateral_asset_price);
+        let (liquidator_reward, platform_reserve, insurance_fund, borrower_protection) = 
+            calculate_penalty_distribution<T>(pool, penalty_amount_in_collateral);
+        
+        // Update position debt
+        position.borrowed_amount = safe_math::safe_sub(position.borrowed_amount, debt_repay_amount);
+        position.last_updated = clock::timestamp_ms(clock);
+        
+        // Update pool statistics
+        pool.stats.total_liquidations = safe_math::safe_add(pool.stats.total_liquidations, 1);
+        pool.stats.total_liquidation_penalties = safe_math::safe_add(
+            pool.stats.total_liquidation_penalties, 
+            penalty_amount_in_collateral
+        );
+        
+        // Emit low liquidation penalty event
+        event::emit(LowLiquidationPenaltyEvent {
+            pool_id: pool.pool_id,
+            position_id: object::id(position),
+            liquidator: tx_context::sender(ctx),
+            borrower: @0x0, // TODO: Need to store borrower address in position
+            collateral_liquidated: liquidation_amount,
+            penalty_amount: penalty_amount_in_collateral,
+            penalty_rate,
+            liquidator_reward,
+            platform_reserve,
+            insurance_fund,
+            borrower_protection,
+            timestamp: clock::timestamp_ms(clock),
+        });
+        
+        // Emit penalty distribution event
+        event::emit(PenaltyDistributionEvent {
+            pool_id: pool.pool_id,
+            position_id: object::id(position),
+            total_penalty: penalty_amount_in_collateral,
+            liquidator_share: liquidator_reward,
+            platform_share: platform_reserve,
+            insurance_share: insurance_fund,
+            borrower_protection_share: borrower_protection,
+            timestamp: clock::timestamp_ms(clock),
+        });
+        
+        (liquidated_assets, debt_repay_amount, liquidator_reward, platform_reserve, insurance_fund)
+    }
+
+    /// Get low penalty configuration for the pool
+    public fun get_low_penalty_config<T>(pool: &BorrowingPool<T>): (u64, u64, u64, bool, bool, bool) {
+        (
+            pool.low_penalty_config.base_penalty_rate,
+            pool.low_penalty_config.min_penalty_rate,
+            pool.low_penalty_config.max_penalty_rate,
+            pool.low_penalty_config.market_condition_adjustment,
+            pool.low_penalty_config.volatility_adjustment,
+            pool.low_penalty_config.liquidity_adjustment,
+        )
+    }
+
+    /// Get penalty distribution configuration for the pool
+    public fun get_penalty_distribution_config<T>(pool: &BorrowingPool<T>): (u64, u64, u64, bool) {
+        (
+            pool.penalty_distribution_config.liquidator_reward_rate,
+            pool.penalty_distribution_config.platform_reserve_rate,
+            pool.penalty_distribution_config.insurance_fund_rate,
+            pool.penalty_distribution_config.borrower_protection_enabled,
+        )
+    }
+
+    /// Get market condition factors for the pool
+    public fun get_market_condition_factors<T>(pool: &BorrowingPool<T>): (u8, u8, u8, u64) {
+        (
+            pool.market_condition_factors.volatility_level,
+            pool.market_condition_factors.liquidity_factor,
+            pool.market_condition_factors.price_stability,
+            pool.market_condition_factors.last_updated,
+        )
+    }
 
 #[test_only]
 /// Destroy a collateral holder for testing

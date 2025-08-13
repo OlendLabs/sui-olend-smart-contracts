@@ -18,8 +18,6 @@ const ADMIN: address = @0xAD;
 #[test]
 fun test_pyth_adapter_basic() {
     let mut scenario = test::begin(ADMIN);
-    let clock = clock::create_for_testing(ctx(&mut scenario));
-=======
     let mut clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
