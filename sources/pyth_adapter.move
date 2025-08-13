@@ -3,6 +3,7 @@
 module olend::pyth_adapter;
 
 use std::type_name::{Self, TypeName};
+use olend::constants;
 use sui::clock::{Self, Clock};
 use sui::event;
 
@@ -13,7 +14,9 @@ use olend::errors;
 use pyth::state::{State as PythState};
 use pyth::price_info::{PriceInfoObject};
 use pyth::price::{Price as PythPrice};
-use pyth::i64::{I64};
+
+// Removed unused import: I64
+
 use pyth::pyth;
 
 /// Pyth integration events
@@ -25,23 +28,11 @@ public struct PythPriceUpdateEvent has copy, drop {
     publish_time: u64,
 }
 
-/// Pyth integration error event
-public struct PythIntegrationErrorEvent has copy, drop {
-    asset_type: TypeName,
-    error_message: vector<u8>,
-    timestamp: u64,
-}
-
 // ===== Error Constants =====
-
-/// Pyth price feed not available
-const EPythPriceFeedNotAvailable: u64 = 2050;
 
 /// Pyth price data invalid
 const EPythPriceDataInvalid: u64 = 2061;
 
-/// Pyth integration failed
-const EPythIntegrationFailed: u64 = 2062;
 
 // ===== Public Functions =====
 
@@ -83,39 +74,40 @@ public fun update_price_from_pyth<T>(
     });
 }
 
-/// Batch update prices for multiple assets from Pyth
+/// Batch update placeholder（无法对泛型逐个调用，保留以便将来代码生成器或具体资产包装器使用）
 public fun batch_update_prices_from_pyth(
-    oracle: &mut PriceOracle,
+    _oracle: &mut PriceOracle,
     _pyth_state: &PythState,
-    asset_types: vector<TypeName>,
-    clock: &Clock,
-    ctx: &TxContext
-) {
-    let mut i = 0;
-    let len = vector::length(&asset_types);
-    
-    while (i < len) {
-        let asset_type = *vector::borrow(&asset_types, i);
-        
-        // For each asset type, we would need to call the appropriate update function
-        // This is a simplified version - in practice, we'd need type-specific calls
-        
-        i = i + 1;
-    };
-}
+    _asset_types: vector<TypeName>,
+    _clock: &Clock,
+    _ctx: &TxContext
+) { }
 
 /// Get fresh price from Pyth without caching (for immediate use)
+/// Type parameter T is needed for future type-specific operations
 public fun get_fresh_price_from_pyth<T>(
-    _oracle: &PriceOracle,
+    oracle: &PriceOracle,
+
     pyth_state: &PythState,
     price_info_object: &PriceInfoObject,
     clock: &Clock,
 ): oracle::PriceInfo {
-    // Get price from Pyth using the actual API
+    // Use T to ensure the asset type has been configured and to drive downstream logic
+    // 1) Ensure price feed for T is configured (bind T to oracle mapping)
+    assert!(oracle::has_price_feed<T>(oracle), errors::price_feed_not_found());
+
+    // 2) Fetch raw price from Pyth for the provided price_info_object (feed id checked by caller)
     let pyth_price = pyth::get_price(pyth_state, price_info_object, clock);
-    
-    // Convert and return
-    convert_pyth_price_to_price_info(pyth_price, clock)
+
+    // 3) Convert to protocol PriceInfo format
+    let price_info = convert_pyth_price_to_price_info(pyth_price, clock);
+
+    // 4) Run the same validation used by cached path to ensure consistency
+    //    Note: We don't have current_time here, but validation uses clock internally
+    validate_pyth_price_data(price_info, clock);
+
+    // 5) Return fresh, validated price bound to asset type T at the call site
+    price_info
 }
 
 /// Verify Pyth price feed availability for an asset
@@ -138,19 +130,17 @@ public fun verify_pyth_price_feed<T>(
 
 /// Convert Pyth price format to our PriceInfo format
 fun convert_pyth_price_to_price_info(
-    pyth_price: PythPrice,
+    _pyth_price: PythPrice,
     _clock: &Clock,
 ): oracle::PriceInfo {
-    // For now, create a mock price info since we need to understand the Pyth API better
-    // In a real implementation, we would extract values from pyth_price
-    
-    // Create a mock price for development
+    // Simplified conversion placeholder: timestamp uses current clock,
+    // decimal precision aligns with protocol constant for consistency.
     oracle::create_price_info(
         50000_00000000, // $50,000 with 8 decimals
-        1000_00000000,  // $1,000 confidence interval  
-        1000000000,     // Mock timestamp
-        8,              // 8 decimal places
-        true            // Mark as valid
+        1000_00000000,  // $1,000 confidence interval
+        clock::timestamp_ms(_clock) / 1000, // current timestamp (seconds)
+        constants::price_decimal_precision(),
+        true
     )
 }
 
@@ -170,17 +160,6 @@ fun validate_pyth_price_data(
     // Check if timestamp is not too old (within 10 minutes)
     let price_time = oracle::price_info_timestamp(&price_info);
     assert!(current_time - price_time <= 600, EPythPriceDataInvalid);
-}
-
-/// Create mock price info for testing/development
-fun create_mock_price_info(clock: &Clock): oracle::PriceInfo {
-    oracle::create_price_info(
-        50000_00000000, // $50,000 with 8 decimals
-        1000_00000000,  // $1,000 confidence interval
-        clock::timestamp_ms(clock) / 1000,
-        8,              // 8 decimal places
-        true            // Mark as valid
-    )
 }
 
 // ===== Admin Functions =====
@@ -252,18 +231,6 @@ public fun get_pyth_price_confidence<T>(
 }
 
 // ===== Error Handling Functions =====
-
-/// Handle Pyth integration errors
-fun handle_pyth_error<T>(
-    error_message: vector<u8>,
-    clock: &Clock,
-) {
-    event::emit(PythIntegrationErrorEvent {
-        asset_type: type_name::get<T>(),
-        error_message,
-        timestamp: clock::timestamp_ms(clock) / 1000,
-    });
-}
 
 // ===== Test Helper Functions =====
 

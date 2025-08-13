@@ -18,6 +18,8 @@ const ADMIN: address = @0xAD;
 #[test]
 fun test_pyth_adapter_basic() {
     let mut scenario = test::begin(ADMIN);
+    let clock = clock::create_for_testing(ctx(&mut scenario));
+=======
     let mut clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
@@ -27,7 +29,7 @@ fun test_pyth_adapter_basic() {
         transfer::public_transfer(admin_cap, ADMIN);
     };
     
-    // Configure price feed and test basic functionality
+        // Configure price feed and test basic functionality
     next_tx(&mut scenario, ADMIN);
     {
         let mut oracle = test::take_shared<PriceOracle>(&scenario);
@@ -45,7 +47,7 @@ fun test_pyth_adapter_basic() {
         test::return_shared(oracle);
     };
     
-    clock::destroy_for_testing(clock);
+        clock::destroy_for_testing(clock);
     test::end(scenario);
 }
 
@@ -79,7 +81,7 @@ fun test_pyth_price_feed_configuration() {
         test::return_shared(oracle);
     };
     
-    test::end(scenario);
+        test::end(scenario);
 }
 
 /// Test multiple price feed configurations
@@ -123,7 +125,7 @@ fun test_multiple_price_feeds() {
 
 /// Test price feed configuration validation
 #[test]
-#[expected_failure(abort_code = 2054)] // EInvalidPriceFeedId
+#[expected_failure(abort_code = 2054, location = olend::pyth_adapter)]
 fun test_invalid_price_feed_id() {
     let mut scenario = test::begin(ADMIN);
     
@@ -150,5 +152,6 @@ fun test_invalid_price_feed_id() {
         test::return_shared(oracle);
     };
     
-    test::end(scenario);
+     test::end(scenario);
 }
+

@@ -18,6 +18,8 @@ public struct PriceOracle has key {
     id: UID,
     /// Protocol version for access control
     version: u64,
+    /// Admin capability ID for permission control
+    admin_cap_id: ID,
     /// Pyth price feed ID mappings for each asset type
     price_feeds: Table<TypeName, vector<u8>>,
     /// Cached price information for efficiency
@@ -103,23 +105,38 @@ const EOracleEmergencyMode: u64 = 2055;
 /// Price validation failed
 const EPriceValidationFailed: u64 = 2056;
 
-/// Unauthorized oracle access
-const EUnauthorizedOracleAccess: u64 = 2057;
 
 /// Invalid oracle configuration
 const EInvalidOracleConfig: u64 = 2058;
 
-/// Price cache miss
-const EPriceCacheMiss: u64 = 2059;
-
 // ===== Public Functions =====
 
-/// Initialize the price oracle system
-/// Creates a shared PriceOracle object and returns admin capability
+/// Module initialization: create and share PriceOracle, transfer OracleAdminCap to deployer
+fun init(ctx: &mut TxContext) {
+    let (oracle, admin_cap) = create_oracle_with_admin(ctx);
+    // Share oracle and transfer admin cap to package publisher (transaction sender)
+    transfer::share_object(oracle);
+    transfer::transfer(admin_cap, tx_context::sender(ctx));
+}
+
+#[test_only]
+/// Test-only initializer to keep existing tests working
 public fun initialize_oracle(ctx: &mut TxContext): OracleAdminCap {
+    let (oracle, admin_cap) = create_oracle_with_admin(ctx);
+    transfer::share_object(oracle);
+    admin_cap
+}
+
+// Internal helper to create oracle and admin cap with default config
+fun create_oracle_with_admin(ctx: &mut TxContext): (PriceOracle, OracleAdminCap) {
+    let admin_cap = OracleAdminCap { id: object::new(ctx) };
+    let admin_cap_id = object::id(&admin_cap);
+
     let oracle = PriceOracle {
         id: object::new(ctx),
         version: constants::current_version(),
+        admin_cap_id,
+
         price_feeds: table::new(ctx),
         price_cache: table::new(ctx),
         max_price_delay: 300, // 5 minutes default
@@ -133,18 +150,14 @@ public fun initialize_oracle(ctx: &mut TxContext): OracleAdminCap {
         },
     };
 
-    transfer::share_object(oracle);
-
-    OracleAdminCap {
-        id: object::new(ctx),
-    }
+    (oracle, admin_cap)
 }
 
 /// Configure price feed for an asset type
 /// Only callable by admin
 public fun configure_price_feed<T>(
     oracle: &mut PriceOracle,
-    _admin_cap: &OracleAdminCap,
+    admin_cap: &OracleAdminCap,
     price_feed_id: vector<u8>,
     _ctx: &TxContext
 ) {
@@ -153,6 +166,9 @@ public fun configure_price_feed<T>(
         utils::is_version_compatible(oracle.version, constants::current_version()),
         errors::version_mismatch()
     );
+
+    // Admin check
+    assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
 
     // Validate price feed ID
     assert!(!vector::is_empty(&price_feed_id), EInvalidPriceFeedId);
@@ -200,13 +216,13 @@ public fun get_price<T>(
         };
     };
 
-    // If no valid cached price, we would fetch from Pyth here
-    // For now, return a placeholder that indicates we need Pyth integration
+    // If no valid cached price, return invalid placeholder to signal caller
+    // to perform explicit refresh via pyth_adapter before retrying.
     PriceInfo {
         price: 0,
         confidence: 0,
         timestamp: clock::timestamp_ms(clock) / 1000,
-        expo: 8, // 8 decimal places (stored as positive, interpreted as negative)
+        expo: constants::price_decimal_precision(),
         is_valid: false,
     }
 }
@@ -224,14 +240,17 @@ public(package) fun update_price_cache<T>(
 
     // Validate price data
     if (oracle.config.enable_validation) {
-        validate_price_data(oracle, &price_info, current_time);
+        validate_price_data(oracle, &price_info, current_time, asset_type);
     };
 
-    // Check for price manipulation
+    // Read old price BEFORE updating cache for event emission and manipulation check
+    let mut old_price_value = 0u64;
     if (table::contains(&oracle.price_cache, asset_type)) {
-        let old_price = table::borrow(&oracle.price_cache, asset_type);
-        if (old_price.is_valid) {
-            check_price_manipulation(oracle, old_price.price, price_info.price, asset_type);
+        let old_price_ref = table::borrow(&oracle.price_cache, asset_type);
+        if (old_price_ref.is_valid) {
+            old_price_value = old_price_ref.price;
+            // Check for price manipulation with proper timestamp
+            check_price_manipulation(oracle, old_price_value, price_info.price, asset_type, current_time);
         };
     };
 
@@ -246,12 +265,10 @@ public(package) fun update_price_cache<T>(
     // Emit price update event
     event::emit(PriceUpdateEvent {
         asset_type,
-        old_price: if (table::contains(&oracle.price_cache, asset_type)) {
-            table::borrow(&oracle.price_cache, asset_type).price
-        } else { 0 },
-        new_price: price_info.price,
+        old_price: old_price_value,
+        new_price: table::borrow(&oracle.price_cache, asset_type).price,
         timestamp: current_time,
-        confidence: price_info.confidence,
+        confidence: table::borrow(&oracle.price_cache, asset_type).confidence,
     });
 }
 
@@ -305,13 +322,15 @@ public fun get_oracle_config(oracle: &PriceOracle): OracleConfig {
 /// Update oracle configuration
 public fun update_oracle_config(
     oracle: &mut PriceOracle,
-    _admin_cap: &OracleAdminCap,
+    admin_cap: &OracleAdminCap,
     new_config: OracleConfig,
 ) {
     assert!(
         utils::is_version_compatible(oracle.version, constants::current_version()),
         errors::version_mismatch()
     );
+    
+    assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
 
     oracle.config = new_config;
 }
@@ -319,7 +338,7 @@ public fun update_oracle_config(
 /// Set maximum price delay
 public fun set_max_price_delay(
     oracle: &mut PriceOracle,
-    _admin_cap: &OracleAdminCap,
+    admin_cap: &OracleAdminCap,
     delay_seconds: u64,
 ) {
     assert!(
@@ -327,13 +346,15 @@ public fun set_max_price_delay(
         errors::version_mismatch()
     );
 
+    assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
+
     oracle.max_price_delay = delay_seconds;
 }
 
 /// Set minimum confidence requirement
 public fun set_min_confidence(
     oracle: &mut PriceOracle,
-    _admin_cap: &OracleAdminCap,
+    admin_cap: &OracleAdminCap,
     confidence: u64,
 ) {
     assert!(
@@ -342,27 +363,50 @@ public fun set_min_confidence(
     );
 
     assert!(confidence <= 100, EInvalidOracleConfig);
+
+    assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
     oracle.min_confidence = confidence;
 }
 
 /// Enable/disable emergency mode
 public fun set_emergency_mode(
     oracle: &mut PriceOracle,
-    _admin_cap: &OracleAdminCap,
+    admin_cap: &OracleAdminCap,
     emergency: bool,
 ) {
+    assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
     oracle.config.emergency_mode = emergency;
 }
 
 /// Clear price cache for an asset type
 public fun clear_price_cache<T>(
     oracle: &mut PriceOracle,
-    _admin_cap: &OracleAdminCap,
+    admin_cap: &OracleAdminCap,
 ) {
+    assert!(object::id(admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
+
     let asset_type = type_name::get<T>();
     if (table::contains(&oracle.price_cache, asset_type)) {
         table::remove(&mut oracle.price_cache, asset_type);
     };
+}
+
+/// Rotate Oracle admin capability. Creates and returns a new OracleAdminCap and binds it to oracle.
+/// Requires the current admin to authorize the rotation.
+public fun rotate_admin(
+    oracle: &mut PriceOracle,
+    current_admin_cap: &OracleAdminCap,
+    ctx: &mut TxContext
+): OracleAdminCap {
+    // Current admin must match
+    assert!(object::id(current_admin_cap) == oracle.admin_cap_id, errors::unauthorized_oracle_access());
+
+    // Create new admin cap and rebind
+    let new_admin_cap = OracleAdminCap { id: object::new(ctx) };
+    let new_admin_cap_id = object::id(&new_admin_cap);
+    oracle.admin_cap_id = new_admin_cap_id;
+
+    new_admin_cap
 }
 
 // ===== Internal Helper Functions =====
@@ -372,10 +416,13 @@ fun validate_price_data(
     oracle: &PriceOracle,
     price_info: &PriceInfo,
     current_time: u64,
+    asset_type: TypeName,
 ) {
     // Check if price data is not too old
     if (current_time - price_info.timestamp > oracle.max_price_delay) {
         event::emit(PriceValidationErrorEvent {
+            asset_type,
+=======
             asset_type: type_name::get<u64>(), // Placeholder
             error_type: 1, // Stale data
             timestamp: current_time,
@@ -387,7 +434,7 @@ fun validate_price_data(
     // Check confidence level
     if (price_info.confidence < oracle.min_confidence) {
         event::emit(PriceValidationErrorEvent {
-            asset_type: type_name::get<u64>(), // Placeholder
+            asset_type,
             error_type: 2, // Low confidence
             timestamp: current_time,
             details: b"Price confidence too low",
@@ -402,6 +449,7 @@ fun check_price_manipulation(
     old_price: u64,
     new_price: u64,
     asset_type: TypeName,
+    current_time: u64,
 ) {
     if (old_price == 0) return; // Skip check for first price
 
@@ -415,7 +463,7 @@ fun check_price_manipulation(
         event::emit(PriceValidationErrorEvent {
             asset_type,
             error_type: 3, // Manipulation detected
-            timestamp: 0, // Will be set by caller
+            timestamp: current_time,
             details: b"Excessive price change detected",
         });
         abort EPriceManipulationDetected

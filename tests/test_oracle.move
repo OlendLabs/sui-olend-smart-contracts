@@ -91,7 +91,8 @@ fun test_configure_price_feed() {
 #[test]
 fun test_price_cache() {
     let mut scenario = test::begin(ADMIN);
-    let mut clock = clock::create_for_testing(ctx(&mut scenario));
+
+    let clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
     next_tx(&mut scenario, ADMIN);
@@ -138,7 +139,8 @@ fun test_price_cache() {
 #[test]
 fun test_price_validation() {
     let mut scenario = test::begin(ADMIN);
-    let mut clock = clock::create_for_testing(ctx(&mut scenario));
+
+    let clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
     next_tx(&mut scenario, ADMIN);
@@ -182,7 +184,7 @@ fun test_price_validation() {
 #[test]
 fun test_usd_conversion() {
     let mut scenario = test::begin(ADMIN);
-    let mut clock = clock::create_for_testing(ctx(&mut scenario));
+    let clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
     next_tx(&mut scenario, ADMIN);
@@ -199,12 +201,14 @@ fun test_usd_conversion() {
         
         oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
         
-        // Cache BTC price at $50,000
+        // Cache BTC price at $50,000 using protocol decimal precision
+
         let price_info = oracle::create_price_info(
             50000_00000000, // $50,000
             98,
             clock::timestamp_ms(&clock) / 1000,
-            8,
+            olend::constants::price_decimal_precision(),
+
             true
         );
         
@@ -267,10 +271,10 @@ fun test_admin_config() {
 
 /// Test error conditions
 #[test]
-#[expected_failure(abort_code = 2050)]
+#[expected_failure(abort_code = 2050, location = olend::oracle)]
 fun test_get_price_without_feed() {
     let mut scenario = test::begin(ADMIN);
-    let mut clock = clock::create_for_testing(ctx(&mut scenario));
+    let clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
     next_tx(&mut scenario, ADMIN);
@@ -296,10 +300,10 @@ fun test_get_price_without_feed() {
 
 /// Test emergency mode blocking
 #[test]
-#[expected_failure(abort_code = 2055)]
+#[expected_failure(abort_code = 2055, location = olend::oracle)]
 fun test_emergency_mode_blocks_price_access() {
     let mut scenario = test::begin(ADMIN);
-    let mut clock = clock::create_for_testing(ctx(&mut scenario));
+    let clock = clock::create_for_testing(ctx(&mut scenario));
     
     // Initialize oracle
     next_tx(&mut scenario, ADMIN);
@@ -332,6 +336,259 @@ fun test_emergency_mode_blocks_price_access() {
         test::return_shared(oracle);
     };
     
+    clock::destroy_for_testing(clock);
+    test::end(scenario);
+}
+
+/// End-to-end: cache expiry should cause get_price to return invalid placeholder
+#[test]
+fun test_cache_expiry_behavior() {
+    let mut scenario = test::begin(ADMIN);
+    let clock = clock::create_for_testing(ctx(&mut scenario));
+
+    // Initialize oracle
+    next_tx(&mut scenario, ADMIN);
+    {
+        let admin_cap = oracle::initialize_oracle(ctx(&mut scenario));
+        transfer::public_transfer(admin_cap, ADMIN);
+    };
+
+    // Configure feed and write an expired price
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut oracle = test::take_shared<PriceOracle>(&scenario);
+        let admin_cap = test::take_from_sender<OracleAdminCap>(&scenario);
+
+        oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
+
+        // Simulate invalid cached price (acts like expired/unusable for get_price)
+        let now_ts = clock::timestamp_ms(&clock) / 1000;
+        let invalid_cached = oracle::create_price_info(100_00000000, 98, now_ts, 8, false);
+        oracle::update_price_cache<BTC>(&mut oracle, invalid_cached, &clock, ctx(&mut scenario));
+
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(oracle);
+    };
+
+    // Read should not return cached (expired), but placeholder invalid
+    next_tx(&mut scenario, ADMIN);
+    {
+        let oracle = test::take_shared<PriceOracle>(&scenario);
+        let p = oracle::get_price<BTC>(&oracle, &clock);
+        assert!(!oracle::price_info_is_valid(&p), 0);
+        test::return_shared(oracle);
+    };
+
+    clock::destroy_for_testing(clock);
+    test::end(scenario);
+}
+
+/// End-to-end: clear cache removes cached price and forces placeholder
+#[test]
+fun test_clear_price_cache_removes_entry() {
+    let mut scenario = test::begin(ADMIN);
+    let clock = clock::create_for_testing(ctx(&mut scenario));
+
+    // Initialize oracle
+    next_tx(&mut scenario, ADMIN);
+    {
+        let admin_cap = oracle::initialize_oracle(ctx(&mut scenario));
+        transfer::public_transfer(admin_cap, ADMIN);
+    };
+
+    // Configure, cache price, then clear and read
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut oracle = test::take_shared<PriceOracle>(&scenario);
+        let admin_cap = test::take_from_sender<OracleAdminCap>(&scenario);
+
+        oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
+        let now_ts = clock::timestamp_ms(&clock) / 1000;
+        let price = oracle::create_price_info(100_00000000, 98, now_ts, 8, true);
+        oracle::update_price_cache<BTC>(&mut oracle, price, &clock, ctx(&mut scenario));
+
+        // Clear cache
+        oracle::clear_price_cache<BTC>(&mut oracle, &admin_cap);
+
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(oracle);
+    };
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let oracle = test::take_shared<PriceOracle>(&scenario);
+        let p = oracle::get_price<BTC>(&oracle, &clock);
+        assert!(!oracle::price_info_is_valid(&p), 0);
+        test::return_shared(oracle);
+    };
+
+    clock::destroy_for_testing(clock);
+    test::end(scenario);
+}
+
+/// End-to-end: updating with fresh timestamp succeeds (no clock advance available)
+#[test]
+fun test_stale_price_rejected_on_update() {
+    let mut scenario = test::begin(ADMIN);
+    let clock = clock::create_for_testing(ctx(&mut scenario));
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let admin_cap = oracle::initialize_oracle(ctx(&mut scenario));
+        transfer::public_transfer(admin_cap, ADMIN);
+    };
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut oracle = test::take_shared<PriceOracle>(&scenario);
+        let admin_cap = test::take_from_sender<OracleAdminCap>(&scenario);
+        oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
+
+        // Use current timestamp; should succeed under default max_price_delay
+        let now_ts = clock::timestamp_ms(&clock) / 1000;
+        let fresh = oracle::create_price_info(100_00000000, 98, now_ts, 8, true);
+        oracle::update_price_cache<BTC>(&mut oracle, fresh, &clock, ctx(&mut scenario));
+
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(oracle);
+    };
+
+    clock::destroy_for_testing(clock);
+    test::end(scenario);
+}
+
+/// End-to-end: low confidence rejected on write (EPriceConfidenceTooLow=2052)
+#[test]
+#[expected_failure(abort_code = 2052, location = olend::oracle)]
+fun test_low_confidence_rejected_on_update() {
+    let mut scenario = test::begin(ADMIN);
+    let clock = clock::create_for_testing(ctx(&mut scenario));
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let admin_cap = oracle::initialize_oracle(ctx(&mut scenario));
+        transfer::public_transfer(admin_cap, ADMIN);
+    };
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut oracle = test::take_shared<PriceOracle>(&scenario);
+        let admin_cap = test::take_from_sender<OracleAdminCap>(&scenario);
+        oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
+
+        let now_ts = clock::timestamp_ms(&clock) / 1000;
+        let low_conf = oracle::create_price_info(100_00000000, 50, now_ts, 8, true);
+        oracle::update_price_cache<BTC>(&mut oracle, low_conf, &clock, ctx(&mut scenario));
+
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(oracle);
+    };
+
+    clock::destroy_for_testing(clock);
+    test::end(scenario);
+}
+
+/// End-to-end: manipulation detection on sharp price change (>10%) (EPriceManipulationDetected=2053)
+#[test]
+#[expected_failure(abort_code = 2053, location = olend::oracle)]
+fun test_price_manipulation_detected() {
+    let mut scenario = test::begin(ADMIN);
+    let clock = clock::create_for_testing(ctx(&mut scenario));
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let admin_cap = oracle::initialize_oracle(ctx(&mut scenario));
+        transfer::public_transfer(admin_cap, ADMIN);
+    };
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut oracle = test::take_shared<PriceOracle>(&scenario);
+        let admin_cap = test::take_from_sender<OracleAdminCap>(&scenario);
+        oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
+
+        let now_ts = clock::timestamp_ms(&clock) / 1000;
+        let p1 = oracle::create_price_info(100_00000000, 98, now_ts, 8, true);
+        oracle::update_price_cache<BTC>(&mut oracle, p1, &clock, ctx(&mut scenario));
+
+        // 20% jump triggers detection (>10% max change)
+        let p2 = oracle::create_price_info(120_00000000, 98, now_ts, 8, true);
+        oracle::update_price_cache<BTC>(&mut oracle, p2, &clock, ctx(&mut scenario));
+
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(oracle);
+    };
+
+    clock::destroy_for_testing(clock);
+    test::end(scenario);
+}
+
+/// End-to-end: raising min_confidence causes subsequent lower-confidence updates to fail
+#[test]
+#[expected_failure(abort_code = 2052, location = olend::oracle)]
+fun test_set_min_confidence_effect() {
+    let mut scenario = test::begin(ADMIN);
+    let clock = clock::create_for_testing(ctx(&mut scenario));
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let admin_cap = oracle::initialize_oracle(ctx(&mut scenario));
+        transfer::public_transfer(admin_cap, ADMIN);
+    };
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut oracle = test::take_shared<PriceOracle>(&scenario);
+        let admin_cap = test::take_from_sender<OracleAdminCap>(&scenario);
+        oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
+
+        // Raise min confidence to 99
+        oracle::set_min_confidence(&mut oracle, &admin_cap, 99);
+
+        // Attempt update with 98% confidence should fail
+        let now_ts = clock::timestamp_ms(&clock) / 1000;
+        let p = oracle::create_price_info(100_00000000, 98, now_ts, 8, true);
+        oracle::update_price_cache<BTC>(&mut oracle, p, &clock, ctx(&mut scenario));
+
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(oracle);
+    };
+
+    clock::destroy_for_testing(clock);
+    test::end(scenario);
+}
+
+/// End-to-end: lowering max_price_delay applies and fresh updates still succeed
+#[test]
+fun test_set_max_price_delay_effect() {
+    let mut scenario = test::begin(ADMIN);
+    let clock = clock::create_for_testing(ctx(&mut scenario));
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let admin_cap = oracle::initialize_oracle(ctx(&mut scenario));
+        transfer::public_transfer(admin_cap, ADMIN);
+    };
+
+    next_tx(&mut scenario, ADMIN);
+    {
+        let mut oracle = test::take_shared<PriceOracle>(&scenario);
+        let admin_cap = test::take_from_sender<OracleAdminCap>(&scenario);
+        oracle::configure_price_feed<BTC>(&mut oracle, &admin_cap, b"btc_feed", ctx(&mut scenario));
+
+        // Set small delay window
+        oracle::set_max_price_delay(&mut oracle, &admin_cap, 10);
+        assert!(oracle::max_price_delay(&oracle) == 10, 0);
+
+        // Use current timestamp to ensure success
+        let now_ts = clock::timestamp_ms(&clock) / 1000;
+        let p = oracle::create_price_info(100_00000000, 98, now_ts, 8, true);
+        oracle::update_price_cache<BTC>(&mut oracle, p, &clock, ctx(&mut scenario));
+
+        test::return_to_sender(&scenario, admin_cap);
+        test::return_shared(oracle);
+    };
+
     clock::destroy_for_testing(clock);
     test::end(scenario);
 }

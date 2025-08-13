@@ -722,7 +722,7 @@ fun test_batch_operation_with_invalid_position() {
 
 /// Test rate limit enforcement failure
 #[test]
-#[expected_failure(abort_code = 2013, location = olend::account)]
+#[expected_failure(abort_code = 5014, location = olend::account)]
 fun test_rate_limit_enforcement_failure() {
     let mut scenario = test_scenario::begin(USER1);
     

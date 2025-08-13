@@ -89,7 +89,7 @@ const EPositionIdNotFound: u64 = 2011;
 const EInvalidAllowanceType: u64 = 2012;
 
 /// Rate limit exceeded
-const ERateLimitExceeded: u64 = 2013;
+const EAccountRateLimitExceeded: u64 = 2013;
 
 /// Replay attack detected
 const EReplayAttackDetected: u64 = 2014;
@@ -111,8 +111,9 @@ const EPriceDataStale: u64 = 2051;
 /// Price confidence too low
 const EPriceConfidenceTooLow: u64 = 2052;
 
-/// Price manipulation detected
-const EPriceManipulationDetected: u64 = 2053;
+/// Price manipulation detected (Oracle module)
+const EOraclePriceManipulationDetected: u64 = 2053;
+
 
 /// Invalid price feed ID
 const EInvalidPriceFeedId: u64 = 2054;
@@ -131,6 +132,68 @@ const EInvalidOracleConfig: u64 = 2058;
 
 /// Price cache miss
 const EPriceCacheMiss: u64 = 2059;
+
+// ===== Security Error Codes (5000-5999) =====
+
+/// Oracle price is stale (timestamp too old)
+const EOraclePriceStale: u64 = 5001;
+
+/// Oracle confidence level too low
+const EOracleConfidenceLow: u64 = 5002;
+
+/// Price manipulation detected
+const EPriceManipulationDetected: u64 = 5003;
+
+/// Circuit breaker is active
+const ECircuitBreakerActive: u64 = 5004;
+
+/// Reentrancy attack detected
+const EReentrancyDetected: u64 = 5005;
+
+/// Flash loan attack detected
+const EFlashLoanAttack: u64 = 5006;
+
+/// Mathematical overflow detected
+const EMathOverflow: u64 = 5007;
+
+/// Mathematical underflow detected
+const EMathUnderflow: u64 = 5008;
+
+/// Access denied - insufficient permissions
+const EAccessDenied: u64 = 5009;
+
+/// Operation is time-delayed
+const EOperationDelayed: u64 = 5010;
+
+/// Multi-signature required for operation
+const EMultisigRequired: u64 = 5011;
+
+/// Emergency pause is active
+const EEmergencyPauseActive: u64 = 5012;
+
+/// Position is too new for operation
+const EPositionTooNew: u64 = 5013;
+
+/// Rate limit exceeded
+const ERateLimitExceeded: u64 = 5014;
+
+/// Suspicious activity pattern detected
+const ESuspiciousActivity: u64 = 5015;
+
+/// Division by zero attempted
+const EDivisionByZero: u64 = 5016;
+
+/// Invalid security configuration
+const EInvalidSecurityConfig: u64 = 5017;
+
+/// Security module not initialized
+const ESecurityNotInitialized: u64 = 5018;
+
+/// Invalid role assignment
+const EInvalidRole: u64 = 5019;
+
+/// Operation timeout exceeded
+const EOperationTimeout: u64 = 5020;
 
 // ===== General Error Codes (9000-9999) =====
 
@@ -180,7 +243,7 @@ public fun invalid_account_status(): u64 { EInvalidAccountStatus }
 // Sub-account functionality removed
 public fun position_id_not_found(): u64 { EPositionIdNotFound }
 public fun invalid_allowance_type(): u64 { EInvalidAllowanceType }
-public fun rate_limit_exceeded(): u64 { ERateLimitExceeded }
+public fun account_rate_limit_exceeded(): u64 { EAccountRateLimitExceeded }
 public fun replay_attack_detected(): u64 { EReplayAttackDetected }
 public fun suspicious_activity_detected(): u64 { ESuspiciousActivityDetected }
 public fun account_restricted(): u64 { EAccountRestricted }
@@ -189,13 +252,107 @@ public fun account_restricted(): u64 { EAccountRestricted }
 public fun price_feed_not_found(): u64 { EPriceFeedNotFound }
 public fun price_data_stale(): u64 { EPriceDataStale }
 public fun price_confidence_too_low(): u64 { EPriceConfidenceTooLow }
-public fun price_manipulation_detected(): u64 { EPriceManipulationDetected }
+
+public fun oracle_price_manipulation_detected(): u64 { EOraclePriceManipulationDetected }
+
 public fun invalid_price_feed_id(): u64 { EInvalidPriceFeedId }
 public fun oracle_emergency_mode(): u64 { EOracleEmergencyMode }
 public fun price_validation_failed(): u64 { EPriceValidationFailed }
 public fun unauthorized_oracle_access(): u64 { EUnauthorizedOracleAccess }
 public fun invalid_oracle_config(): u64 { EInvalidOracleConfig }
 public fun price_cache_miss(): u64 { EPriceCacheMiss }
+
+
+// ===== Borrowing Pool Module Error Codes (4000-4099) =====
+
+/// Pool is paused
+const EBorrowingPoolPaused: u64 = 4001;
+
+/// Insufficient collateral
+const EInsufficientCollateral: u64 = 4002;
+
+/// Insufficient borrow amount
+const EInsufficientBorrow: u64 = 4003;
+
+/// Position not found
+const EPositionNotFound: u64 = 4004;
+
+/// Invalid pool configuration
+const EInvalidBorrowingPoolConfig: u64 = 4005;
+
+/// Borrowing not allowed
+const EBorrowingNotAllowed: u64 = 4006;
+
+/// Repayment not allowed
+const ERepaymentNotAllowed: u64 = 4007;
+
+/// Liquidation not allowed
+const ELiquidationNotAllowed: u64 = 4008;
+
+/// Borrow limit exceeded
+const EBorrowLimitExceeded: u64 = 4009;
+
+/// Collateral ratio too high (unsafe)
+const ECollateralRatioTooHigh: u64 = 4010;
+
+/// Position not liquidatable
+const EPositionNotLiquidatable: u64 = 4011;
+
+/// Invalid liquidation amount
+const EInvalidLiquidationAmount: u64 = 4012;
+
+/// Invalid liquidation
+const EInvalidLiquidation: u64 = 4013;
+
+/// Invalid collateral holder
+const EInvalidCollateralHolder: u64 = 4014;
+
+/// No liquidation needed
+const ENoLiquidationNeeded: u64 = 4015;
+
+/// Invalid parameters
+const EInvalidParameters: u64 = 4016;
+
+/// Get Borrowing Pool-related error codes
+public fun borrowing_pool_paused(): u64 { EBorrowingPoolPaused }
+public fun insufficient_collateral(): u64 { EInsufficientCollateral }
+public fun insufficient_borrow(): u64 { EInsufficientBorrow }
+public fun position_not_found(): u64 { EPositionNotFound }
+public fun invalid_borrowing_pool_config(): u64 { EInvalidBorrowingPoolConfig }
+public fun borrowing_not_allowed(): u64 { EBorrowingNotAllowed }
+public fun repayment_not_allowed(): u64 { ERepaymentNotAllowed }
+public fun liquidation_not_allowed(): u64 { ELiquidationNotAllowed }
+public fun borrow_limit_exceeded(): u64 { EBorrowLimitExceeded }
+public fun collateral_ratio_too_high(): u64 { ECollateralRatioTooHigh }
+public fun position_not_liquidatable(): u64 { EPositionNotLiquidatable }
+public fun invalid_liquidation_amount(): u64 { EInvalidLiquidationAmount }
+public fun invalid_liquidation(): u64 { EInvalidLiquidation }
+public fun invalid_collateral_holder(): u64 { EInvalidCollateralHolder }
+public fun no_liquidation_needed(): u64 { ENoLiquidationNeeded }
+public fun invalid_parameters(): u64 { EInvalidParameters }
+
+/// Get Security-related error codes
+public fun oracle_price_stale(): u64 { EOraclePriceStale }
+public fun oracle_confidence_low(): u64 { EOracleConfidenceLow }
+public fun price_manipulation_detected(): u64 { EPriceManipulationDetected }
+public fun circuit_breaker_active(): u64 { ECircuitBreakerActive }
+public fun reentrancy_detected(): u64 { EReentrancyDetected }
+public fun flash_loan_attack(): u64 { EFlashLoanAttack }
+public fun math_overflow(): u64 { EMathOverflow }
+public fun math_underflow(): u64 { EMathUnderflow }
+public fun access_denied(): u64 { EAccessDenied }
+public fun operation_delayed(): u64 { EOperationDelayed }
+public fun multisig_required(): u64 { EMultisigRequired }
+public fun emergency_pause_active(): u64 { EEmergencyPauseActive }
+public fun position_too_new(): u64 { EPositionTooNew }
+public fun rate_limit_exceeded(): u64 { ERateLimitExceeded }
+public fun suspicious_activity(): u64 { ESuspiciousActivity }
+public fun division_by_zero(): u64 { EDivisionByZero }
+public fun invalid_security_config(): u64 { EInvalidSecurityConfig }
+public fun security_not_initialized(): u64 { ESecurityNotInitialized }
+public fun invalid_role(): u64 { EInvalidRole }
+public fun operation_timeout(): u64 { EOperationTimeout }
+
 
 /// Get general error codes
 public fun invalid_input(): u64 { EInvalidInput }
