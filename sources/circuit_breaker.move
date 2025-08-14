@@ -3,13 +3,13 @@
 /// Built on top of the secure oracle circuit breaker foundation
 module olend::circuit_breaker;
 
-use std::type_name::{Self, TypeName};
+
 use sui::table::{Self, Table};
 use sui::clock::{Self, Clock};
 use sui::event;
 
 use olend::errors;
-use olend::security;
+
 use olend::security_constants;
 use olend::safe_math;
 
@@ -103,12 +103,8 @@ public struct CircuitBreakerRecoveryEvent has copy, drop {
 
 // ===== Error Constants =====
 
-const E_CIRCUIT_BREAKER_OPEN: u64 = 6001;
-const E_GLOBAL_EMERGENCY_ACTIVE: u64 = 6002;
 const E_OPERATION_NOT_CONFIGURED: u64 = 6003;
 const E_INVALID_THRESHOLD_CONFIG: u64 = 6004;
-const E_RECOVERY_NOT_ALLOWED: u64 = 6005;
-const E_MAX_RECOVERY_ATTEMPTS_EXCEEDED: u64 = 6006;
 
 // ===== Operation Type Constants =====
 
@@ -305,38 +301,7 @@ public struct TriggerResult has drop {
     trigger_reason: vector<u8>,
 }
 
-/// Check if circuit breaker should be triggered
-fun should_trigger_circuit_breaker(
-    state: &CircuitBreakerState,
-    config: &ThresholdConfig,
-    current_time: u64,
-): TriggerResult {
-    let mut should_trigger = false;
-    let mut trigger_reason = b"";
-    
-    // Check consecutive failure threshold
-    if (state.consecutive_failures >= config.failure_threshold) {
-        should_trigger = true;
-        trigger_reason = b"Consecutive failure threshold exceeded";
-    }
-    // Check success rate threshold
-    else if (state.success_rate < config.success_rate_threshold && state.total_operations >= 10) {
-        should_trigger = true;
-        trigger_reason = b"Success rate below threshold";
-    }
-    // Check time-based failure rate
-    else if (state.last_failure_time > 0 && 
-             current_time - state.last_failure_time <= config.time_window &&
-             state.failure_count >= config.failure_threshold) {
-        should_trigger = true;
-        trigger_reason = b"Failure rate in time window exceeded";
-    };
-    
-    TriggerResult {
-        should_trigger,
-        trigger_reason,
-    }
-}
+
 
 /// Check and trigger circuit breaker inline to avoid borrowing issues
 fun check_and_trigger_inline(

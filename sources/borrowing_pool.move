@@ -3,6 +3,7 @@
 module olend::borrowing_pool;
 
 use std::type_name::{Self, TypeName};
+
 use sui::table::{Self, Table};
 use sui::coin::{Self, Coin};
 use sui::clock::{Self, Clock};
@@ -346,17 +347,7 @@ public struct LowLiquidationPenaltyEvent has copy, drop {
     timestamp: u64,
 }
 
-/// Dynamic penalty adjustment event (Task 6.3)
-public struct DynamicPenaltyAdjustmentEvent has copy, drop {
-    pool_id: u64,
-    asset_type: TypeName,
-    base_penalty: u64,
-    adjusted_penalty: u64,
-    volatility_factor: u8,
-    liquidity_factor: u8,
-    price_stability: u8,
-    timestamp: u64,
-}
+
 
 /// Penalty distribution event (Task 6.3)
 public struct PenaltyDistributionEvent has copy, drop {
@@ -401,11 +392,7 @@ const EBorrowLimitExceeded: u64 = 4009;
 /// Collateral ratio too high (unsafe)
 const ECollateralRatioTooHigh: u64 = 4010;
 
-/// Position is overdue
-const EPositionOverdue: u64 = 4011;
 
-/// Invalid term configuration
-const EInvalidTerm: u64 = 4012;
 
 // Removed liquidation-related error codes (unused)
 
@@ -423,8 +410,7 @@ const BASIS_POINTS: u64 = 10000;
 /// Seconds per year for APR calculation
 const SECONDS_PER_YEAR: u64 = 31536000;
 
-/// Arithmetic overflow error
-const EArithmeticOverflow: u64 = 4013;
+
 
 /// Invalid vault exchange rate
 const EInvalidExchangeRate: u64 = 4014;
@@ -452,14 +438,7 @@ const OVERDUE_GRACE_PERIOD: u64 = 604800;
 /// Overdue penalty rate (in basis points, e.g., 500 = 5% annual)
 const OVERDUE_PENALTY_RATE: u64 = 500;
 
-/// Liquidation-related error constants
-const EInvalidLiquidation: u64 = 4016;
-const ELiquidationNotAllowed: u64 = 4017;
-const EInvalidCollateralHolder: u64 = 4018;
-const ENoLiquidationNeeded: u64 = 4019;
-const EInvalidParameters: u64 = 4020;
-const EInvalidPenaltyRate: u64 = 4021;
-const EInsufficientLiquidity: u64 = 4022;
+
 
 // ===== Helper Functions =====
 
@@ -1577,8 +1556,14 @@ public fun repay_and_claim<T, C>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<YToken<C>> {
-    let closed = repay<T>(pool, vault, account, account_cap, position, repay_asset, clock, ctx);
+    let (closed, remaining_coin) = repay<T>(pool, vault, account, account_cap, position, repay_asset, clock, ctx);
     assert!(closed, errors::operation_denied());
+    // Handle remaining coin
+    if (coin::value(&remaining_coin) > 0) {
+        transfer::public_transfer(remaining_coin, tx_context::sender(ctx));
+    } else {
+        coin::destroy_zero(remaining_coin);
+    };
     claim_collateral<C>(account, account_cap, position, collateral_holder, collateral_vault, ctx)
 }
 
@@ -1593,7 +1578,7 @@ public fun repay<T>(
     repay_asset: Coin<T>,
     clock: &Clock,
     ctx: &mut TxContext
-): bool {
+): (bool, Coin<T>) {
     // Verify pool version
     assert!(pool.version == constants::current_version(), errors::version_mismatch());
     
@@ -1714,13 +1699,6 @@ public fun repay<T>(
         account::add_user_points_for_module(account, account_cap, total_credit_points);
     };
     
-    // Transfer remaining coin back to user if any
-    if (coin::value(&remaining_coin) > 0) {
-        transfer::public_transfer(remaining_coin, tx_context::sender(ctx));
-    } else {
-        coin::destroy_zero(remaining_coin);
-    };
-    
     // Emit repay event
     event::emit(RepayEvent {
         pool_id: pool.pool_id,
@@ -1730,8 +1708,8 @@ public fun repay<T>(
         timestamp: safe_math::safe_div(clock::timestamp_ms(clock), 1000),
     });
     
-    // Return true if position is fully closed
-    position.status == POSITION_STATUS_CLOSED
+    // Return position status and remaining coin
+    (position.status == POSITION_STATUS_CLOSED, remaining_coin)
 }
 
 // ===== High Collateral Ratio Configuration Management =====
@@ -2095,18 +2073,7 @@ public fun calculate_overdue_penalty(position: &BorrowPosition, clock: &Clock): 
     safe_math::safe_mul_div(annual_penalty, overdue_days, 365)
 }
 
-/// Update position with overdue penalty and deduct credit points
-fun apply_overdue_penalty(position: &mut BorrowPosition, clock: &Clock) {
-    if (!is_position_overdue(position, clock)) {
-        return
-    };
-    
-    let penalty = calculate_overdue_penalty(position, clock);
-    if (penalty > 0) {
-        position.accrued_interest = safe_math::safe_add(position.accrued_interest, penalty);
-        position.last_updated = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
-    };
-}
+
 
 /// Apply overdue penalty and deduct credit points from user account
 /// This is a separate function that requires account access for point deduction
@@ -2159,7 +2126,7 @@ public fun get_days_until_maturity(position: &BorrowPosition, clock: &Clock): u6
 }
 
 /// Check if early repayment is allowed for fixed-term positions
-public fun is_early_repayment_allowed(position: &BorrowPosition, clock: &Clock): bool {
+public fun is_early_repayment_allowed(position: &BorrowPosition, _clock: &Clock): bool {
     if (position.term_type == TERM_TYPE_INDEFINITE) {
         return true // Indefinite positions can always be repaid
     };
@@ -2302,7 +2269,7 @@ public fun calculate_potential_overdue_penalty_points(position: &BorrowPosition,
 #[test_only]
 /// Create a test position for testing purposes
 public fun create_test_position(
-    position_id: u64,
+    _position_id: u64,
     borrower: address,
     pool_id: u64,
     borrowed_amount: u64,
@@ -2662,21 +2629,7 @@ public struct LiquidationTick has store, copy, drop {
     total_debt_value: u64,
 }
 
-/// Liquidation queue entry for tracking positions ready for liquidation
-public struct LiquidationQueueEntry has store, copy, drop {
-    /// Position ID
-    position_id: ID,
-    /// Current LTV of the position
-    current_ltv: u64,
-    /// Collateral value (in USD, scaled by price precision)
-    collateral_value: u64,
-    /// Debt value (in USD, scaled by price precision)
-    debt_value: u64,
-    /// Priority score (higher = more urgent)
-    priority_score: u64,
-    /// Timestamp when added to queue
-    queued_at: u64,
-}
+
 
 /// Liquidation result information
 public struct LiquidationResult has copy, drop {
@@ -2695,6 +2648,8 @@ public struct LiquidationResult has copy, drop {
     /// Whether the position was fully liquidated
     fully_liquidated: bool,
 }
+
+
 
 /// Event emitted when a position is liquidated
 public struct LiquidationEvent has copy, drop {
@@ -3159,7 +3114,7 @@ public fun liquidate_position<T, C>(
     position: &mut BorrowPosition,
     collateral_holder: &mut CollateralHolder<C>,
     collateral_vault: &mut Vault<C>,
-    borrow_vault: &mut Vault<T>,
+    _borrow_vault: &mut Vault<T>,
     oracle: &PriceOracle,
     clock: &Clock,
     ctx: &mut TxContext
@@ -3223,7 +3178,7 @@ public fun liquidate_position<T, C>(
     
     // Calculate penalty and reward using dynamic rate
     let penalty_value_usd = safe_math::safe_mul_div(liquidated_value_usd, dynamic_penalty_rate, BASIS_POINTS);
-    let reward_value_usd = safe_math::safe_mul_div(liquidated_value_usd, pool.tick_config.liquidation_reward, BASIS_POINTS);
+    let _reward_value_usd = safe_math::safe_mul_div(liquidated_value_usd, pool.tick_config.liquidation_reward, BASIS_POINTS);
     
     // Calculate debt to repay (liquidated value - penalty)
     let debt_repay_value_usd = safe_math::safe_sub(liquidated_value_usd, penalty_value_usd);
@@ -3263,10 +3218,6 @@ public fun liquidate_position<T, C>(
     // For now, we'll assume direct repayment (this would need DEX integration)
     // Convert debt repay to borrow asset and repay to vault
     let debt_repay_ytoken = vault::deposit(collateral_vault, debt_repay_coin, ctx);
-    // This is a placeholder - in reality we'd need DEX integration to swap assets
-    // For now, we'll just destroy the YToken since we can't use it
-    let liquidator = tx_context::sender(ctx);
-    transfer::public_transfer(debt_repay_ytoken, liquidator);
     
     // Update position debt
     if (actual_debt_repay >= position.borrowed_amount) {
@@ -3308,14 +3259,7 @@ public fun liquidate_position<T, C>(
     // For now, we'll burn the penalty coins
     coin::destroy_zero(penalty_coin);
     
-    // Transfer reward to liquidator
-    // liquidator already defined above
-    let reward_amount = coin::value(&reward_coin);
-    if (reward_amount > 0) {
-        transfer::public_transfer(reward_coin, liquidator);
-    } else {
-        coin::destroy_zero(reward_coin);
-    };
+    // Prepare reward coin for return
     
     // Return remaining collateral to borrower (if any)
     let remaining_collateral = coin::value(&liquidated_assets);
@@ -3331,6 +3275,7 @@ public fun liquidate_position<T, C>(
     
     // Emit liquidation event
     let timestamp = safe_math::safe_div(clock::timestamp_ms(clock), 1000);
+    let liquidator = tx_context::sender(ctx);
     event::emit(LiquidationEvent {
         pool_id: pool.pool_id,
         position_id: position.position_id,
@@ -3339,7 +3284,7 @@ public fun liquidate_position<T, C>(
         collateral_liquidated: actual_liquidation_amount,
         debt_repaid: actual_debt_repay,
         penalty_collected: actual_penalty_amount,
-        reward_paid: reward_amount,
+        reward_paid: coin::value(&reward_coin),
         timestamp,
     });
     
@@ -3372,20 +3317,20 @@ public fun liquidate_position<T, C>(
     });
     
     // Calculate liquidation effectiveness metrics
-    let collateral_reduction_ratio = if (original_collateral > 0) {
+    let _collateral_reduction_ratio = if (original_collateral > 0) {
         safe_math::safe_mul_div(actual_liquidation_amount, BASIS_POINTS, original_collateral)
     } else {
         0
     };
     
-    let debt_reduction_ratio = if (original_debt > 0) {
+    let _debt_reduction_ratio = if (original_debt > 0) {
         safe_math::safe_mul_div(actual_debt_repay, BASIS_POINTS, original_debt)
     } else {
         0
     };
     
-    // Return enhanced liquidation result with partial liquidation info
-    LiquidationResult {
+    // Return enhanced liquidation result with coins for composability
+    let result = LiquidationResult {
         position_id: position.position_id,
         collateral_liquidated: actual_liquidation_amount,
         debt_repaid: actual_debt_repay,
@@ -3393,7 +3338,23 @@ public fun liquidate_position<T, C>(
         reward_paid: actual_reward_amount,
         collateral_returned: remaining_collateral,
         fully_liquidated,
-    }
+    };
+    
+    // Transfer coins to liquidator
+    let liquidator = tx_context::sender(ctx);
+    if (coin::value(&debt_repay_ytoken) > 0) {
+        transfer::public_transfer(debt_repay_ytoken, liquidator);
+    } else {
+        coin::destroy_zero(debt_repay_ytoken);
+    };
+    
+    if (coin::value(&reward_coin) > 0) {
+        transfer::public_transfer(reward_coin, liquidator);
+    } else {
+        coin::destroy_zero(reward_coin);
+    };
+    
+    result
 }
 
 /// Execute multiple rounds of partial liquidation until position is safe
@@ -3670,7 +3631,7 @@ public fun liquidate_position_adaptive<T, C>(
         };
         
         // Calculate progress metrics
-        let (ltv_improvement, collateral_ratio, debt_ratio, safety_score) = calculate_liquidation_progress<T, C>(
+        let (ltv_improvement, _collateral_ratio, _debt_ratio, safety_score) = calculate_liquidation_progress<T, C>(
             pool, position, initial_collateral, initial_debt, collateral_vault, oracle, clock
         );
         
@@ -3793,7 +3754,7 @@ public fun calculate_smart_liquidation_strategy<T, C>(
 ): (bool, u64, u64) {
     let current_ltv = calculate_current_ltv<T, C>(position, collateral_vault, oracle, clock);
     let liquidation_ltv = pool.liquidation_ltv;
-    let warning_ltv = pool.warning_ltv;
+    let _warning_ltv = pool.warning_ltv;
     
     // Calculate how far over the liquidation threshold the position is
     let ltv_excess = if (current_ltv > liquidation_ltv) {
@@ -3886,7 +3847,7 @@ public fun calculate_multi_round_liquidation_impact<T, C>(
         };
         
         // Simplified safety check - if LTV would be below liquidation threshold
-        let target_ltv = calculate_safe_target_ltv(pool);
+        let _target_ltv = calculate_safe_target_ltv(pool);
         // This is a simplified check - in reality we'd need full price calculations
         if (rounds >= 3) { // Assume most positions are safe after 3 rounds
             break
@@ -3902,9 +3863,9 @@ public fun calculate_multi_round_liquidation_impact<T, C>(
 public fun batch_liquidate_tick_simple<T, C>(
     pool: &mut BorrowingPool<T>,
     position_count: u64,
-    collateral_vault: &mut Vault<C>,
-    borrow_vault: &mut Vault<T>,
-    oracle: &PriceOracle,
+    _collateral_vault: &mut Vault<C>,
+    _borrow_vault: &mut Vault<T>,
+    _oracle: &PriceOracle,
     clock: &Clock,
     _ctx: &mut TxContext
 ): u64 {
@@ -4056,7 +4017,7 @@ public fun create_collateral_holder_for_testing<C>(
         collateral_asset_type: TypeName,
         market_volatility: u8,
         liquidity_depth: u8,
-        liquidation_amount: u64,
+        _liquidation_amount: u64,
     ): u64 {
         let base_penalty = pool.low_penalty_config.base_penalty_rate;
         
@@ -4302,7 +4263,7 @@ public fun create_collateral_holder_for_testing<C>(
         position: &mut BorrowPosition,
         collateral_holder: &mut CollateralHolder<C>,
         collateral_vault: &mut Vault<C>,
-        borrow_vault: &mut Vault<T>,
+        _borrow_vault: &mut Vault<T>,
         oracle: &PriceOracle,
         liquidation_amount: u64,
         market_volatility: u8,

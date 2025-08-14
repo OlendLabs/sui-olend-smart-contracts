@@ -1,10 +1,7 @@
 #[test_only]
 module olend::safe_math_fuzz_test;
 
-use sui::test_scenario::{Self};
-use sui::clock::{Self};
 use olend::safe_math;
-use olend::errors;
 
 // ===== Fuzz Testing for Mathematical Operations =====
 

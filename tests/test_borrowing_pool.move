@@ -1885,7 +1885,7 @@ fun test_low_liquidation_penalty_mechanism() {
         let clock = clock::create_for_testing(ctx(&mut scenario));
         
         // Test 1: Get initial low penalty configuration
-        let (base_penalty, min_penalty, max_penalty, market_adj, vol_adj, liq_adj) = 
+        let (base_penalty, min_penalty, max_penalty, market_adj, _vol_adj, _liq_adj) = 
             borrowing_pool::get_low_penalty_config(&pool);
         
         // Verify default configuration (0.1% base penalty)

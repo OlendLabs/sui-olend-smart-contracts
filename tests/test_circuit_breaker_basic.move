@@ -7,8 +7,8 @@ use sui::test_scenario::{Self, next_tx, ctx};
 use sui::clock;
 use sui::test_utils;
 
-use olend::secure_oracle::{Self, SecurePriceOracle, SecurityAdminCap};
-use olend::oracle::{Self, PriceOracle, OracleAdminCap};
+use olend::secure_oracle::{Self, SecurityAdminCap};
+use olend::oracle::{Self, PriceOracle};
 
 // Test asset type
 public struct USDC has drop {}

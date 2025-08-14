@@ -441,8 +441,9 @@ public fun deposit<T>(
     // Add position to user account
     account::add_position(account, account_cap, position_id);
     
-    // Transfer position to user
-    transfer::public_transfer(position, tx_context::sender(ctx));
+    // Store position in user account instead of transferring
+    // The position is already added to the account via add_position above
+    transfer::share_object(position);
     
     // Emit deposit event
     event::emit(DepositEvent {

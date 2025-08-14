@@ -13,7 +13,7 @@ use olend::errors;
 use olend::security;
 use olend::security_constants;
 use olend::safe_math;
-use sui::tx_context::{TxContext};
+
 
 // ===== Enhanced Security Structures =====
 
@@ -121,19 +121,13 @@ public struct CircuitBreakerEvent has copy, drop {
 
 // ===== Error Constants =====
 
-const E_SECURE_ORACLE_PRICE_STALE: u64 = 5001;
-const E_SECURE_ORACLE_CONFIDENCE_LOW: u64 = 5002;
-const E_SECURE_PRICE_MANIPULATION_DETECTED: u64 = 5003;
-const E_SECURE_CIRCUIT_BREAKER_ACTIVE: u64 = 5004;
-const E_SECURE_VALIDATION_FAILED: u64 = 5005;
 const E_SECURE_FEED_NOT_CONFIGURED: u64 = 5006;
 const E_SECURE_EMERGENCY_MODE_ACTIVE: u64 = 5007;
-const E_SECURE_INVALID_VALIDATION_SCORE: u64 = 5008;
 
 // ===== Initialization =====
 
 /// Initialize secure oracle system
-fun init(ctx: &mut TxContext) {
+fun init(ctx: &mut tx_context::TxContext) {
     let security_admin_cap = SecurityAdminCap { id: object::new(ctx) };
     transfer::transfer(security_admin_cap, tx_context::sender(ctx));
 }
@@ -142,7 +136,7 @@ fun init(ctx: &mut TxContext) {
 public fun create_and_share_secure_oracle(
     base_oracle: &PriceOracle,
     admin_cap: &OracleAdminCap,
-    ctx: &mut TxContext
+    ctx: &mut tx_context::TxContext
 ) {
     let secure_oracle = create_secure_oracle(base_oracle, admin_cap, ctx);
     transfer::share_object(secure_oracle);
@@ -152,7 +146,7 @@ public fun create_and_share_secure_oracle(
 public fun create_secure_oracle(
     base_oracle: &PriceOracle,
     admin_cap: &OracleAdminCap,
-    ctx: &mut TxContext
+    ctx: &mut tx_context::TxContext
 ): SecurePriceOracle {
     let security_admin_cap = SecurityAdminCap { id: object::new(ctx) };
     let security_admin_cap_id = object::id(&security_admin_cap);
@@ -191,7 +185,7 @@ public fun configure_enhanced_price_feed<T>(
     max_staleness: u64,
     circuit_breaker_enabled: bool,
     validation_enabled: bool,
-    _ctx: &TxContext
+    _ctx: &tx_context::TxContext
 ) {
     // Verify admin permissions
     assert!(object::id(admin_cap) == secure_oracle.admin_cap_id, errors::unauthorized_oracle_access());
@@ -925,16 +919,7 @@ public fun check_and_activate_circuit_breaker<T>(
     
     // Initialize circuit breaker state if not exists
     if (!table::contains(&secure_oracle.price_cache, asset_type)) {
-        let initial_state = CircuitBreakerState {
-            is_active: false,
-            activation_time: 0,
-            trigger_type: 0,
-            trigger_value: 0,
-            recovery_time: 0,
-            activation_count: 0,
-            last_reset_time: clock::timestamp_ms(clock) / 1000,
-        };
-        // Store in a separate table for circuit breaker states
+        // Circuit breaker state would be stored in a separate table
         // For now, we'll use a flag in the oracle structure
     };
     
@@ -959,7 +944,7 @@ public fun check_and_activate_circuit_breaker<T>(
 
 /// Internal function to activate circuit breaker
 fun activate_circuit_breaker_internal<T>(
-    secure_oracle: &mut SecurePriceOracle,
+    secure_oracle: &SecurePriceOracle,
     trigger_type: u8,
     trigger_value: u64,
     current_time: u64,
@@ -1086,7 +1071,7 @@ public fun activate_emergency_circuit_breaker(
     security_admin_cap: &SecurityAdminCap,
     reason: vector<u8>,
     clock: &Clock,
-    ctx: &TxContext
+    ctx: &tx_context::TxContext
 ) {
     assert!(object::id(security_admin_cap) == secure_oracle.emergency_admin_cap_id, errors::unauthorized_oracle_access());
     
@@ -1125,7 +1110,7 @@ public fun deactivate_emergency_circuit_breaker(
     secure_oracle: &mut SecurePriceOracle,
     security_admin_cap: &SecurityAdminCap,
     clock: &Clock,
-    ctx: &TxContext
+    ctx: &tx_context::TxContext
 ) {
     assert!(object::id(security_admin_cap) == secure_oracle.emergency_admin_cap_id, errors::unauthorized_oracle_access());
     
@@ -1261,7 +1246,7 @@ public fun manual_circuit_breaker_recovery<T>(
     security_admin_cap: &SecurityAdminCap,
     reason: vector<u8>,
     clock: &Clock,
-    ctx: &TxContext
+    ctx: &tx_context::TxContext
 ) {
     assert!(object::id(security_admin_cap) == secure_oracle.emergency_admin_cap_id, errors::unauthorized_oracle_access());
     
@@ -1338,7 +1323,7 @@ public fun update_price_history<T>(
         let time_gap = safe_math::safe_sub(validated_price.timestamp, last_point.timestamp);
         
         // Ensure chronological order
-        assert!(validated_price.timestamp >= last_point.timestamp, E_SECURE_VALIDATION_FAILED);
+        assert!(validated_price.timestamp >= last_point.timestamp, errors::price_validation_failed());
         
         // Check for suspicious time gaps (too frequent updates)
         if (time_gap < 10) { // Less than 10 seconds

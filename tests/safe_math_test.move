@@ -4,7 +4,7 @@ module olend::safe_math_test;
 use sui::test_scenario::{Self};
 use sui::clock::{Self};
 use olend::safe_math;
-use olend::errors;
+
 
 #[test]
 fun test_safe_add_normal_cases() {
